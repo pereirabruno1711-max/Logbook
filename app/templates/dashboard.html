@@ -10,6 +10,12 @@
   <a class="kpi" href="/relatorios"><div class="ic green">{{ I.check|safe }}</div><div class="lb">Assinados (30 dias)</div><div class="v" id="kSig">–</div><div class="d flat">&nbsp;</div></a>
   <a class="kpi" href="/relatorios"><div class="ic orange">{{ I.warn|safe }}</div><div class="lb">Dias por assinar (7 dias)</div><div class="v" id="kPend">–</div><div class="d flat">&nbsp;</div></a>
 </div>
+<div class="card flush" style="margin-bottom:18px">
+  <div class="row between" style="padding:16px 20px 8px"><div><h3 style="margin:0">Alertas</h3><div class="small mute" id="alInfo"></div></div>
+    {% if manager %}<button class="btn sec sm" id="runBtn" onclick="runMon()">Verificar agora</button>{% endif %}</div>
+  <table><thead><tr><th>Dia</th><th>Motorista</th><th>Alerta</th><th>Detalhe</th><th class="num"></th></tr></thead>
+    <tbody id="alRows"><tr><td colspan="5" class="empty">A carregar…</td></tr></tbody></table>
+</div>
 <div class="card flush">
   <div class="row between" style="padding:16px 20px 0"><h3 style="margin:0">Motoristas com relatórios em falta</h3></div>
   <table><thead><tr><th>Motorista</th><th>Objeto GPS</th><th>Estado agora</th><th class="num">Dias por assinar</th><th>Último assinado</th></tr></thead>
@@ -19,6 +25,18 @@
 {% block scripts %}
 <script>
 const STL = {working:'Trabalho', resting:'Descanso'};
+const MANAGER = {{ 'true' if manager else 'false' }};
+async function loadAlerts() {
+  const r = await api('/x/alerts');
+  alInfo.textContent = r.last_run ? `Última verificação automática: ${r.last_run.split('-').reverse().join('/')} (corre todas as noites às ${r.hour}h)` : `Corre automaticamente todas as noites às ${r.hour}h. Ainda não correu.`;
+  alRows.innerHTML = r.alerts.length ? r.alerts.map(a => `<tr><td>${esc(a.day.split('-').reverse().join('/'))}</td><td><b>${esc(a.driver)}</b></td><td><span class="pill filling">${esc(a.label)}</span></td>
+    <td class="small">${esc(a.detail)}</td><td class="num">${MANAGER ? `<button class="btn sec sm" onclick="dismiss(${a.id})">Ignorar</button>` : ''}</td></tr>`).join('')
+    : '<tr><td colspan="5" class="empty">Sem alertas.</td></tr>';
+}
+async function dismiss(id) { try { await api('/x/alerts/' + id + '/dismiss', {method: 'POST'}); loadAlerts(); } catch (e) { alert(e.message); } }
+async function runMon() { runBtn.disabled = true; runBtn.textContent = 'A verificar…'; try { await api('/x/monitor/run', {method: 'POST'}); } catch (e) { alert(e.message); }
+  setTimeout(() => { loadAlerts(); runBtn.disabled = false; runBtn.textContent = 'Verificar agora'; }, 8000); }
+loadAlerts().catch(e => alRows.innerHTML = `<tr><td colspan="5" class="empty">${esc(e.message)}</td></tr>`);
 (async () => {
   const d = await api('/x/drivers'), act = d.filter(x => x.active);
   kDrv.textContent = act.length; kWork.textContent = act.filter(x => x.state === 'working').length;

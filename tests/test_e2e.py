@@ -77,3 +77,29 @@ def test_full_flow():
             assert c.get(p).status_code == 200, p
         n = c.get("/x/companies").json()
         assert [x for x in n if x["id"] == cid][0]["drv"] == 1
+
+
+def test_monitor_and_odometer():
+    from app import monitor
+    from app.providers import Point
+    with TestClient(app):
+        cid = auth.create_company("Empresa Monitor")
+        did = db.run("INSERT INTO drivers(company_id,name,token,created_at) VALUES(?,?,?,?)", cid, "Rui", "tokmon", "2026-01-01T00:00:00+00:00")
+        today = logbook.today_local()
+        d3 = (today - timedelta(days=3)).isoformat()
+        s3, _ = logbook.day_bounds(d3)
+        db.run("INSERT INTO assignments(driver_id,provider,device_id,device_name,plate,from_ts) VALUES(?,?,?,?,?,?)",
+               did, "gpswox", "5", "Van", "AA11BB", (s3 - timedelta(days=5)).isoformat())
+
+        def fake(company, provider, device, a, b):  # 10 h de condução num dia
+            return [Point(s3 + timedelta(hours=6, minutes=i), 41 + i * 0.001, -8.0, 70.0) for i in range(600)]
+        logbook.fetch_points = fake
+        monitor.run(cid, days=3)
+        kinds = {a["kind"] for a in db.q("SELECT kind FROM alerts WHERE company_id=?", cid)}
+        assert "conducao_excessiva" in kinds and "por_assinar" in kinds
+        # dica de odómetro vem do último relatório assinado
+        db.run("INSERT INTO logbooks(company_id,driver_id,day,status,data,created_at) VALUES(?,?,?,?,?,?)", cid, did,
+               (today - timedelta(days=9)).isoformat(), "signed", '{"vehicle": {"odo_end": "50000"}}', "x")
+        co, dr = db.one("SELECT * FROM companies WHERE id=?", cid), db.one("SELECT * FROM drivers WHERE id=?", did)
+        v = logbook.compute_day(co, dr, d3)["vehicle"]
+        assert v["odo_start_hint"] == "50000" and v["km_gps"] > 0

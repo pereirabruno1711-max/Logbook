@@ -15,7 +15,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import auth, config, db, logbook
+from . import auth, config, db, logbook, monitor
 from .providers import AuthError, GPSWox, gpswox_login, sync_devices
 from .utils import fmt_plate, from_iso, local_str, now_iso
 
@@ -498,6 +498,32 @@ def logbook_pdf(request: Request, lid: int):
     return Response(_lb_pdf(r), media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="diario_{r["day"]}.pdf"'})
 
 
+# ---------- alertas / verificação noturna ----------
+@app.get("/x/alerts")
+def x_alerts(request: Request):
+    c = me(request)
+    rows = db.q("""SELECT a.*, d.name driver FROM alerts a JOIN drivers d ON d.id=a.driver_id
+                   WHERE a.company_id=? AND a.dismissed=0 ORDER BY a.day DESC, d.name COLLATE NOCASE LIMIT 200""", c["id"])
+    for r in rows:
+        r["label"] = monitor.KINDS.get(r["kind"], r["kind"])
+    last = db.one("SELECT v FROM meta WHERE k='nightly_last'")
+    return {"alerts": rows, "last_run": last["v"] if last else None, "hour": config.NIGHTLY_HOUR}
+
+
+@app.post("/x/alerts/{aid}/dismiss")
+def x_alert_dismiss(request: Request, aid: int):
+    c = _manager(request)
+    db.run("UPDATE alerts SET dismissed=1 WHERE id=? AND company_id=?", aid, c["id"])
+    return {"ok": True}
+
+
+@app.post("/x/monitor/run")
+def x_monitor_run(request: Request, bg: BackgroundTasks):
+    c = _manager(request)
+    bg.add_task(monitor.run, c["id"])
+    return {"ok": True}
+
+
 # ---------- API externa ----------
 @app.get("/api/logbooks")
 def api_logbooks(request: Request):
@@ -633,6 +659,15 @@ def service_worker():
 
 
 # ---------- tarefas automáticas ----------
+def _nightly_due():
+    """Corre uma vez por dia, a partir da hora configurada (hora local)."""
+    now = datetime.now(logbook.TZ)
+    if now.hour < config.NIGHTLY_HOUR:
+        return False
+    last = db.one("SELECT v FROM meta WHERE k='nightly_last'")
+    return not last or last["v"] != now.date().isoformat()
+
+
 def _scheduler():
     last_sync = 0.0
     while True:
@@ -641,6 +676,9 @@ def _scheduler():
                 for c in db.q("SELECT id FROM companies WHERE gpswox_hash IS NOT NULL OR trusttrack_key IS NOT NULL"):
                     _safe_sync(auth.company(c["id"]))
                 last_sync = time.time()
+            if _nightly_due():
+                db.run("INSERT OR REPLACE INTO meta(k,v) VALUES('nightly_last',?)", datetime.now(logbook.TZ).date().isoformat())
+                monitor.run()
         except Exception:  # noqa
             log.exception("scheduler")
         time.sleep(300)

@@ -9,6 +9,12 @@ Digitaliza e automatiza o diário de bordo dos motoristas (solução «Logbook»
 - **Backoffice → Relatórios**: filtro por motoristas e período, PDF individual e **descarga em lote (ZIP)**. API: `GET /api/logbooks?from=&to=&driver=` com `Authorization: Bearer <token da empresa>`.
 - O relatório assinado fica congelado (instantâneo + PDF + SHA-256 + IP).
 
+## Verificação noturna e alertas
+Todas as noites (às `NIGHTLY_HOUR`, por omissão 3h) a app calcula os últimos `NIGHTLY_DAYS` dias de cada motorista ativo e gera alertas no Painel: dia com condução por assinar (há 2+ dias), condução acima de 9 h, sem dados GPS, objeto sem posição há 48 h, «Trabalho» ligado há 14 h e motorista sem objeto. O gestor pode **Verificar agora** ou **Ignorar** um alerta.
+
+## Quilómetros
+A distância por viagem e por dia é medida pelo GPS. O conta-quilómetros: o inicial vem do último relatório assinado do motorista e o final é sugerido (inicial + distância GPS); o motorista confirma com o painel da viatura.
+
 ## Deploy no Coolify
 1. Repositório Git com esta pasta → recurso *Docker Compose* (ou Dockerfile, porta 8000).
 2. Variáveis: copie `.env.example` (obrigatório: `APP_PASSWORD`, `GPSWOX_URL` se usar Track).

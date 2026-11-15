@@ -46,6 +46,9 @@ CREATE TABLE IF NOT EXISTS logbooks(
     pdf_path TEXT, pdf_sha256 TEXT, signed_ip TEXT, UNIQUE(company_id, driver_id, day));
 CREATE INDEX IF NOT EXISTS ix_lb_co ON logbooks(company_id, day);
 
+CREATE TABLE IF NOT EXISTS alerts(
+    id INTEGER PRIMARY KEY AUTOINCREMENT, company_id INTEGER, driver_id INTEGER, day TEXT, kind TEXT, detail TEXT,
+    created_at TEXT, dismissed INTEGER DEFAULT 0, UNIQUE(company_id, driver_id, day, kind));
 CREATE TABLE IF NOT EXISTS geocache(k TEXT PRIMARY KEY, name TEXT);
 """
 

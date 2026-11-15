@@ -44,3 +44,10 @@ SESSION_DAYS = int(env("SESSION_DAYS", "30"))
 # Automação
 VEHICLE_SYNC_HOURS = float(env("VEHICLE_SYNC_HOURS", "24"))
 GEOCODE_ENABLED = env("GEOCODE_ENABLED", "false").lower() == "true"   # nomes de moradas via OpenStreetMap
+
+# Verificação noturna (calcula os últimos dias de cada motorista e gera alertas)
+NIGHTLY_HOUR = int(env("NIGHTLY_HOUR", "3"))              # hora local a que corre
+NIGHTLY_DAYS = int(env("NIGHTLY_DAYS", "3"))              # quantos dias para trás verifica
+MAX_DRIVING_MIN = int(env("MAX_DRIVING_MIN", "540"))      # alerta acima de 9 h de condução/dia
+UNSIGNED_ALERT_DAYS = int(env("UNSIGNED_ALERT_DAYS", "2"))  # alerta de dia por assinar a partir de N dias
+OFFLINE_ALERT_HOURS = int(env("OFFLINE_ALERT_HOURS", "48"))  # objeto sem posição há mais de N horas

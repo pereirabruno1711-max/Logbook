@@ -342,6 +342,17 @@ def compute_day(company, driver, day, data=None, now=None):
                "odo_start": v.get("odo_start", ""), "odo_end": v.get("odo_end", ""), "notes": v.get("notes", ""),
                "confirmed": bool(v.get("confirmed")), "auto": veh_auto is not None}
 
+    prev = db.one("SELECT data FROM logbooks WHERE driver_id=? AND status='signed' AND day<? ORDER BY day DESC LIMIT 1",
+                  driver["id"], day)
+    prev_end = ""
+    if prev:
+        try:
+            prev_end = (json.loads(prev["data"]).get("vehicle") or {}).get("odo_end", "") or ""
+        except ValueError:
+            pass
+    vehicle["odo_start_hint"] = prev_end          # o dia começa onde o último relatório assinado acabou
+    vehicle["km_gps"] = summary["km"]             # a app soma isto ao inicial para sugerir o final
+
     bar = "".join({"driving": "d", "working": "w", "resting": "r", "future": "-"}[x] for x in states)
     return {"day": day, "driver": {"id": driver["id"], "name": driver["name"]}, "is_today": is_today,
             "past": e <= now, "gps_ok": gps_error is None, "gps_error": gps_error, "has_vehicle": bool(asg),

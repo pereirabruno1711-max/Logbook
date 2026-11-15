@@ -123,14 +123,17 @@ function step2() {
   $('#step').innerHTML = `<div class="card"><h2>Viatura</h2>
       ${v.auto ? '<p class="small mute" style="margin-top:0">Preenchido automaticamente com o veículo que tem atribuído.</p>' : '<div class="warn">Não tem veículo atribuído. Indique a matrícula.</div>'}
       <label class="f"><span>Matrícula</span><input type="text" id="vPlate" value="${esc(v.plate)}" autocapitalize="characters" maxlength="20"></label>
-      <div class="grid2"><label class="f"><span>Conta-km inicial</span><input type="text" inputmode="decimal" id="vO1" value="${esc(v.odo_start)}"></label>
+      <div class="grid2"><label class="f"><span>Conta-km inicial</span><input type="text" inputmode="decimal" id="vO1" value="${esc(v.odo_start || v.odo_start_hint)}"></label>
         <label class="f"><span>Conta-km final</span><input type="text" inputmode="decimal" id="vO2" value="${esc(v.odo_end)}"></label></div>
-      <p class="small mute" style="margin:-4px 0 0">Distância medida pelo GPS: <b>${kmf(D.summary.km)} km</b></p></div>
+      <p class="small mute" style="margin:-4px 0 0">Distância medida pelo GPS: <b>${kmf(D.summary.km)} km</b>. ${v.odo_start_hint && !v.odo_start ? 'O inicial vem do último relatório assinado e o final é sugerido a partir do GPS — confirme com o painel da viatura.' : 'O final é sugerido a partir do inicial mais a distância GPS.'}</p></div>
     <div class="card"><h2>Viagens (${D.trips.length})</h2>${trips || '<span class="mute">Sem viagens neste dia.</span>'}</div>
     <div class="card"><label class="f" style="margin:0"><span>Observações (opcional)</span><textarea id="vNotes" rows="3" maxlength="400">${esc(v.notes)}</textarea></label></div>
     <label class="chk"><input type="checkbox" id="vOk" ${v.confirmed ? 'checked' : ''}><span>Confirmo que os dados da viatura e das viagens estão corretos.</span></label>
     <div class="btns two"><button class="btn sec" id="prev">Voltar</button><button class="btn" id="next">Continuar</button></div>
     <button class="btn sec" id="later" style="margin-top:10px">Guardar para depois</button>`;
+  const num = x => parseFloat(String(x).replace(',', '.'));
+  const sugg = () => { const a = num($('#vO1').value); if (!isNaN(a) && (!$('#vO2').value || $('#vO2').dataset.auto)) { $('#vO2').value = String(Math.round(a + D.summary.km)); $('#vO2').dataset.auto = 1; } };
+  $('#vO1').oninput = sugg; $('#vO2').oninput = () => { delete $('#vO2').dataset.auto; }; if (!v.odo_end) sugg();
   const collect = step => ({step, vehicle: {plate: $('#vPlate').value, odo_start: $('#vO1').value, odo_end: $('#vO2').value, notes: $('#vNotes').value, confirmed: $('#vOk').checked},
     trip_notes: Object.fromEntries([...document.querySelectorAll('.tnote')].map(i => [i.dataset.n, i.value]))});
   $('#prev').onclick = async () => { try { await save(collect(1)); STEP = 1; drawDay(); } catch (e) { fail(e); } };
