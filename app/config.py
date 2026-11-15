@@ -51,3 +51,6 @@ NIGHTLY_DAYS = int(env("NIGHTLY_DAYS", "3"))              # quantos dias para tr
 MAX_DRIVING_MIN = int(env("MAX_DRIVING_MIN", "540"))      # alerta acima de 9 h de condução/dia
 UNSIGNED_ALERT_DAYS = int(env("UNSIGNED_ALERT_DAYS", "2"))  # alerta de dia por assinar a partir de N dias
 OFFLINE_ALERT_HOURS = int(env("OFFLINE_ALERT_HOURS", "48"))  # objeto sem posição há mais de N horas
+
+# Odómetro lido da plataforma GPS: 1 se vem em km, 1000 se vem em metros
+ODOMETER_DIVISOR = float(env("ODOMETER_DIVISOR", "1"))

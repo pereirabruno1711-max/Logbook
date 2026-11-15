@@ -402,6 +402,22 @@ def x_devices(request: Request):
     return {"devices": rows, "gps": bool(c.get("gpswox_hash")), "tt": bool(c.get("trusttrack_key"))}
 
 
+@app.get("/x/devices/raw")
+def x_device_raw(request: Request, provider: str, device_id: str):
+    """Dados em bruto de um objeto, para ver onde a plataforma GPS guarda o odómetro."""
+    c = _manager(request)
+    from .providers import clients_for, find_odometer
+    prov = clients_for(auth.company(c["id"])).get(provider)
+    if not prov or not prov.enabled:
+        raise HTTPException(400, "Plataforma não ligada.")
+    try:
+        raw = prov.raw(device_id)
+    except Exception as e:  # noqa
+        raise HTTPException(400, f"A plataforma recusou o pedido ({e.__class__.__name__}).")
+    odo, key = find_odometer(raw) if raw else (None, None)
+    return {"raw": raw, "odometer": odo, "key": key}
+
+
 @app.post("/x/devices/sync")
 def x_devices_sync(request: Request):
     c = _manager(request)

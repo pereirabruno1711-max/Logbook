@@ -350,7 +350,17 @@ def compute_day(company, driver, day, data=None, now=None):
             prev_end = (json.loads(prev["data"]).get("vehicle") or {}).get("odo_end", "") or ""
         except ValueError:
             pass
-    vehicle["odo_start_hint"] = prev_end          # o dia começa onde o último relatório assinado acabou
+    vehicle["odo_start_hint"], vehicle["odo_end_hint"], vehicle["odo_src"] = prev_end, "", ("previous" if prev_end else "")
+    if asg:  # leituras noturnas do odómetro da plataforma GPS (início = leitura desse dia, fim = leitura do dia seguinte)
+        b = best
+        nxt = (parse_day(day) + timedelta(days=1)).isoformat()
+        r0, r1 = (db.one("SELECT km FROM odometer_log WHERE company_id=? AND provider=? AND device_id=? AND snap_day=?",
+                         company["id"], b["provider"], b["device_id"], dd) for dd in (day, nxt))
+        if r0:
+            vehicle["odo_start_hint"], vehicle["odo_src"] = str(round(r0["km"])), "gps"
+        if r1:
+            vehicle["odo_end_hint"] = str(round(r1["km"]))
+            vehicle["odo_src"] = "gps"
     vehicle["km_gps"] = summary["km"]             # a app soma isto ao inicial para sugerir o final
 
     bar = "".join({"driving": "d", "working": "w", "resting": "r", "future": "-"}[x] for x in states)

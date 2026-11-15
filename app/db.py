@@ -49,6 +49,9 @@ CREATE INDEX IF NOT EXISTS ix_lb_co ON logbooks(company_id, day);
 CREATE TABLE IF NOT EXISTS alerts(
     id INTEGER PRIMARY KEY AUTOINCREMENT, company_id INTEGER, driver_id INTEGER, day TEXT, kind TEXT, detail TEXT,
     created_at TEXT, dismissed INTEGER DEFAULT 0, UNIQUE(company_id, driver_id, day, kind));
+CREATE TABLE IF NOT EXISTS odometer_log(
+    company_id INTEGER, provider TEXT, device_id TEXT, snap_day TEXT, km REAL, ts TEXT,
+    PRIMARY KEY(company_id, provider, device_id, snap_day));
 CREATE TABLE IF NOT EXISTS geocache(k TEXT PRIMARY KEY, name TEXT);
 """
 
@@ -75,6 +78,10 @@ def init():
     with tx() as c:
         c.execute("PRAGMA journal_mode=WAL")
         c.executescript(SCHEMA)
+        cols = [r["name"] for r in c.execute("PRAGMA table_info(devices)").fetchall()]
+        for col, typ in (("odometer", "REAL"), ("odo_key", "TEXT")):
+            if col not in cols:
+                c.execute(f"ALTER TABLE devices ADD COLUMN {col} {typ}")
 
 
 def claim_orphans(company_id):  # compatibilidade com auth.py (não há dados antigos a reclamar)

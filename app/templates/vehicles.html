@@ -7,8 +7,14 @@
 <div id="msg"></div>
 <div class="toolbar"><div class="search">{{ I.search|safe }}<input id="q" placeholder="Pesquisar objeto ou matrícula…"></div></div>
 <div class="card flush">
-  <table><thead><tr><th>Objeto</th><th>Matrícula</th><th>Plataforma</th><th>Motorista atribuído</th><th>Última posição</th></tr></thead>
-    <tbody id="rows"><tr><td colspan="5" class="empty">A carregar…</td></tr></tbody></table>
+  <table><thead><tr><th>Objeto</th><th>Matrícula</th><th>Plataforma</th><th>Motorista atribuído</th><th>Última posição</th><th>Odómetro</th><th></th></tr></thead>
+    <tbody id="rows"><tr><td colspan="7" class="empty">A carregar…</td></tr></tbody></table>
+</div>
+<div class="modal hidden" id="rawModal" onclick="if(event.target===this)rawModal.classList.add('hidden')">
+  <div class="box" style="width:min(760px,96vw)"><h2>Dados do objeto</h2>
+    <p class="mute small" id="rawInfo" style="margin:0 0 10px"></p>
+    <textarea id="rawTxt" readonly style="width:100%;height:340px;font:12px/1.4 ui-monospace,Menlo,monospace;border:1px solid var(--line);border-radius:8px;padding:10px"></textarea>
+    <div class="row" style="justify-content:flex-end;margin-top:12px"><button class="btn sec" onclick="rawTxt.select();document.execCommand('copy')">Copiar</button><button class="btn" onclick="rawModal.classList.add('hidden')">Fechar</button></div></div>
 </div>
 {% endblock %}
 {% block scripts %}
@@ -19,12 +25,17 @@ function draw() { const q = document.getElementById('q').value.trim().toLowerCas
   const l = ALL.filter(d => !q || (d.name + ' ' + (d.plate || '')).toLowerCase().includes(q));
   rows.innerHTML = l.length ? l.map(d => `<tr><td><b>${esc(d.name)}</b></td><td>${esc(d.plate) || '—'}</td>
     <td><span class="tag ${(PL[d.provider] || [0, 'none'])[1]}">${(PL[d.provider] || [d.provider])[0]}</span></td>
-    <td>${d.drivers ? esc(d.drivers) : '<span class="mute">—</span>'}</td><td class="small">${esc(d.last_time) || '—'}</td></tr>`).join('')
-    : `<tr><td colspan="5" class="empty">${ALL.length ? 'Nada encontrado.' : 'Sem objetos. Ligue uma plataforma GPS em «Empresas» e sincronize.'}</td></tr>`; }
+    <td>${d.drivers ? esc(d.drivers) : '<span class="mute">—</span>'}</td><td class="small">${esc(d.last_time) || '—'}</td>
+    <td>${d.odometer != null ? `<b>${nf(d.odometer, 0)} km</b><div class="small mute">${esc(d.odo_key)}</div>` : '<span class="tag none">não encontrado</span>'}</td>
+    <td class="num">{% if manager %}<button class="btn sec sm" onclick="raw('${esc(d.provider)}','${esc(d.device_id)}')">Dados</button>{% endif %}</td></tr>`).join('')
+    : `<tr><td colspan="7" class="empty">${ALL.length ? 'Nada encontrado.' : 'Sem objetos. Ligue uma plataforma GPS em «Empresas» e sincronize.'}</td></tr>`; }
 async function load() { const r = await api('/x/devices'); ALL = r.devices; draw(); }
 async function sync() { syncBtn.disabled = true; try { const r = await api('/x/devices/sync', {method: 'POST'});
   msg.innerHTML = `<div class="banner info" style="margin-bottom:14px">${esc(r.report.join(' · '))}</div>`; await load(); } catch (e) { alert(e.message); } syncBtn.disabled = false; }
+async function raw(p, id) { try { const r = await api('/x/devices/raw?provider=' + encodeURIComponent(p) + '&device_id=' + encodeURIComponent(id));
+  rawInfo.textContent = r.odometer != null ? `Odómetro detetado: ${r.odometer} km (campo «${r.key}»). Se não corresponde ao painel da viatura, diga-nos qual é o campo certo.` : 'Nenhum campo de odómetro encontrado nesta resposta. Procure abaixo um campo com a quilometragem total.';
+  rawTxt.value = JSON.stringify(r.raw, null, 2); rawModal.classList.remove('hidden'); } catch (e) { alert(e.message); } }
 document.getElementById('q').addEventListener('input', draw);
-load().catch(e => rows.innerHTML = `<tr><td colspan="5" class="empty">${esc(e.message)}</td></tr>`);
+load().catch(e => rows.innerHTML = `<tr><td colspan="7" class="empty">${esc(e.message)}</td></tr>`);
 </script>
 {% endblock %}

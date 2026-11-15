@@ -81,6 +81,10 @@ def run(company_id=None, days=None):
         if c.get("gpswox_hash") or c.get("trusttrack_key"):
             try:
                 sync_devices(c)       # posição atual dos objetos, para o alerta de «sem sinal»
+                for dv in db.q("SELECT provider, device_id, odometer FROM devices WHERE company_id=? AND odometer IS NOT NULL", c["id"]):
+                    # leitura do odómetro à noite = fim do dia anterior (e início do dia seguinte)
+                    db.run("INSERT OR IGNORE INTO odometer_log(company_id,provider,device_id,snap_day,km,ts) VALUES(?,?,?,?,?,?)",
+                           c["id"], dv["provider"], dv["device_id"], today.isoformat(), dv["odometer"], now_iso())
             except Exception:  # noqa
                 log.exception("sync")
         for d in db.q("SELECT * FROM drivers WHERE company_id=? AND active=1", c["id"]):

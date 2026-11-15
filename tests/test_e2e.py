@@ -103,3 +103,27 @@ def test_monitor_and_odometer():
         co, dr = db.one("SELECT * FROM companies WHERE id=?", cid), db.one("SELECT * FROM drivers WHERE id=?", did)
         v = logbook.compute_day(co, dr, d3)["vehicle"]
         assert v["odo_start_hint"] == "50000" and v["km_gps"] > 0
+
+
+def test_find_odometer_and_snapshots():
+    from app.providers import find_odometer
+    assert find_odometer({"id": 1, "total_distance": 12345.6}) == (12345.6, "total_distance")
+    # sensor do tipo odómetro tem prioridade sobre a distância total
+    k = find_odometer({"total_distance": 10, "sensors": [{"type": "odometer", "val": "98 765 km"}]})
+    assert k[0] == 98765.0 and "sensor" in k[1]
+    assert find_odometer({"vehicle_params": {"mileage": "150000"}}) == (150000.0, "vehicle_params.mileage")
+    assert find_odometer({"id": 1, "name": "x"}) == (None, None)
+
+    with TestClient(app):
+        cid = auth.create_company("Empresa Odo")
+        did = db.run("INSERT INTO drivers(company_id,name,token,created_at) VALUES(?,?,?,?)", cid, "Ana", "tokodo", "2026-01-01T00:00:00+00:00")
+        day = (logbook.today_local() - timedelta(days=2)).isoformat()
+        nxt = (logbook.today_local() - timedelta(days=1)).isoformat()
+        s, _ = logbook.day_bounds(day)
+        db.run("INSERT INTO assignments(driver_id,provider,device_id,device_name,plate,from_ts) VALUES(?,?,?,?,?,?)",
+               did, "gpswox", "7", "Van", "ZZ99ZZ", (s - timedelta(days=9)).isoformat())
+        for d, km in ((day, 80000.4), (nxt, 80120.6)):
+            db.run("INSERT INTO odometer_log(company_id,provider,device_id,snap_day,km,ts) VALUES(?,?,?,?,?,?)", cid, "gpswox", "7", d, km, "x")
+        logbook.fetch_points = lambda *a, **k: []
+        v = logbook.compute_day(db.one("SELECT * FROM companies WHERE id=?", cid), db.one("SELECT * FROM drivers WHERE id=?", did), day)["vehicle"]
+        assert (v["odo_start_hint"], v["odo_end_hint"], v["odo_src"]) == ("80000", "80121", "gps")

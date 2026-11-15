@@ -1,4 +1,5 @@
 """Clientes GPSWox e Trust Track (Ruptela). Cada empresa usa as suas próprias credenciais."""
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -28,6 +29,8 @@ class Device:
     last_time: str | None = None   # ISO UTC da última posição
     lat: float | None = None
     lon: float | None = None
+    odometer: float | None = None  # km (já dividido por ODOMETER_DIVISOR)
+    odo_key: str | None = None
 
 
 def _walk(obj):
@@ -60,6 +63,55 @@ def _status(v):
     if v in ("online", "engine", "ack", "true", "1", "moving", "stopped"):
         return "online"
     return "offline" if v else None
+
+
+_ODO = [(re.compile(r"odometer|odometro|odómetro", re.I), 0), (re.compile(r"mileage", re.I), 1),
+        (re.compile(r"total_?dist|distance_?total|can_?dist", re.I), 2)]
+
+
+def _num(v):
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, (int, float)):
+        return float(v)
+    if isinstance(v, str):
+        t = re.sub(r"(?<=\d)[\s\u00a0](?=\d{3}\b)", "", v)
+        m = re.search(r"-?\d+(?:[.,]\d+)?", t)
+        return float(m.group().replace(",", ".")) if m else None
+    return None
+
+
+def find_odometer(obj):
+    """Procura o odómetro numa resposta da plataforma (campos «odometer», «mileage», «total_distance»,
+    ou um sensor do tipo odómetro). Devolve (km, caminho do campo) ou (None, None)."""
+    found = []
+
+    def walk(o, path):
+        if isinstance(o, dict):
+            if str(o.get("type", "")).lower() == "odometer":
+                for k in ("value", "val"):
+                    n = _num(o.get(k))
+                    if n and n > 0:
+                        found.append((0, n, f"{path}.{k}(sensor)"))
+            for k, v in o.items():
+                if isinstance(v, (dict, list)):
+                    walk(v, f"{path}.{k}" if path else k)
+                    continue
+                for rx, prio in _ODO:
+                    if rx.search(str(k)):
+                        n = _num(v)
+                        if n and n > 0:
+                            found.append((prio, n, f"{path}.{k}" if path else k))
+                        break
+        elif isinstance(o, list):
+            for i, x in enumerate(o):
+                walk(x, f"{path}[{i}]")
+
+    walk(obj, "")
+    if not found:
+        return None, None
+    prio, n, key = min(found, key=lambda t: t[0])
+    return round(n / (config.ODOMETER_DIVISOR or 1), 1), key
 
 
 class AuthError(Exception):
@@ -110,10 +162,17 @@ class GPSWox:
                 dd = d.get("device_data") or {}
                 plate = guess_plate(dd.get("plate_number"), dd.get("registration_number"),
                                     d.get("plate_number"), d.get("name"), dd.get("object_owner"))
+                odo, key = find_odometer(d)
                 out[str(d["id"])] = Device(self.name, str(d["id"]), d["name"], plate,
                                            _status(d.get("online")), _ts(d.get("timestamp")),
-                                           _f(d.get("lat")), _f(d.get("lng")))
+                                           _f(d.get("lat")), _f(d.get("lng")), odo, key)
         return list(out.values())
+
+    def raw(self, device_id):
+        for d in _walk(self._get("get_devices")):
+            if str(d.get("id")) == str(device_id) and ("device_data" in d or "imei" in d or "lat" in d):
+                return d
+        return None
 
     def _parse_time(self, p):
         if config.GPSWOX_RAW_TIME_UTC and p.get("raw_time"):
@@ -169,9 +228,15 @@ class TrustTrack:
             plate = guess_plate(vp.get("license_plate"), vp.get("plate_number"), o.get("license_plate"), o.get("name"))
             lc = o.get("last_coordinate") or {}
             t = lc.get("datetime")
+            odo, key = find_odometer(o)
             out.append(Device(self.name, str(o.get("id")), o.get("name") or str(o.get("id")), plate,
-                              None, t, _f(lc.get("latitude")), _f(lc.get("longitude"))))
+                              None, t, _f(lc.get("latitude")), _f(lc.get("longitude")), odo, key))
         return out
+
+    def raw(self, device_id):
+        data = self._get("objects")
+        items = data if isinstance(data, list) else data.get("items", data.get("objects", []))
+        return next((o for o in items if str(o.get("id")) == str(device_id)), None)
 
     def history(self, device_id, start, end):
         pts, token = {}, None
@@ -240,11 +305,12 @@ def sync_devices(company):
             report.append(f"{prov.name}: erro {e}")
             continue
         for d in devs:
-            db.run("""INSERT INTO devices(company_id,provider,device_id,name,plate,updated_at,online,last_time,lat,lon)
-                      VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(company_id,provider,device_id) DO UPDATE SET
+            db.run("""INSERT INTO devices(company_id,provider,device_id,name,plate,updated_at,online,last_time,lat,lon,odometer,odo_key)
+                      VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(company_id,provider,device_id) DO UPDATE SET
                       name=excluded.name, plate=COALESCE(excluded.plate, devices.plate), updated_at=excluded.updated_at,
-                      online=excluded.online, last_time=excluded.last_time, lat=excluded.lat, lon=excluded.lon""",
+                      online=excluded.online, last_time=excluded.last_time, lat=excluded.lat, lon=excluded.lon,
+                      odometer=excluded.odometer, odo_key=excluded.odo_key""",
                    company["id"], d.provider, d.device_id, d.name, norm_plate(d.plate_guess) if d.plate_guess else None,
-                   now_iso(), d.online, d.last_time, d.lat, d.lon)
+                   now_iso(), d.online, d.last_time, d.lat, d.lon, d.odometer, d.odo_key)
         report.append(f"{ {'gpswox': 'Track', 'trusttrack': 'Trust Track'}.get(prov.name, prov.name)}: {len(devs)} objetos")
     return report

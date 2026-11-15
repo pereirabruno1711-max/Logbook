@@ -12,6 +12,9 @@ Digitaliza e automatiza o diário de bordo dos motoristas (solução «Logbook»
 ## Verificação noturna e alertas
 Todas as noites (às `NIGHTLY_HOUR`, por omissão 3h) a app calcula os últimos `NIGHTLY_DAYS` dias de cada motorista ativo e gera alertas no Painel: dia com condução por assinar (há 2+ dias), condução acima de 9 h, sem dados GPS, objeto sem posição há 48 h, «Trabalho» ligado há 14 h e motorista sem objeto. O gestor pode **Verificar agora** ou **Ignorar** um alerta.
 
+## Odómetro da plataforma GPS
+Ao sincronizar, a app procura em cada objeto um campo de odómetro (`odometer`, `mileage`, `total_distance` ou um sensor de odómetro) e mostra-o em *Objetos GPS*. Se vier em metros, defina `ODOMETER_DIVISOR=1000`. Todas as noites a leitura é guardada, e o relatório do dia usa a leitura desse dia como inicial e a do dia seguinte como final (só há leitura para dias a partir da primeira noite em que a app correu). O botão **Dados** mostra a resposta em bruto do objeto, para confirmar o campo certo.
+
 ## Quilómetros
 A distância por viagem e por dia é medida pelo GPS. O conta-quilómetros: o inicial vem do último relatório assinado do motorista e o final é sugerido (inicial + distância GPS); o motorista confirma com o painel da viatura.
 
