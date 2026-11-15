@@ -175,3 +175,55 @@ def test_odometer_backfill_for_past_days():
         logbook.fetch_points = lambda c, p, d, a, b: drive(s + timedelta(hours=8), odo=lambda i: 40000 + i) if a == s else []
         v = logbook.compute_day(co, dr, day)["vehicle"]
         assert (v["odo_src"], v["odo_start_hint"], v["odo_end_hint"]) == ("gps", "40000", "40059")
+
+
+def test_v2_states_journey_notes_vehicle_inspection():
+    from app.providers import Point
+    with TestClient(app) as c:
+        c.post("/login", data={"email": "admin", "password": "segredo123"})
+        cid = auth.create_company("Empresa V2")
+        db.run("INSERT INTO devices(company_id,provider,device_id,name,plate) VALUES(?,?,?,?,?)", cid, "gpswox", "21", "Van A", "AA00AA")
+        db.run("INSERT INTO devices(company_id,provider,device_id,name,plate) VALUES(?,?,?,?,?)", cid, "gpswox", "22", "Van B", "BB00BB")
+        did = db.run("INSERT INTO drivers(company_id,name,token,created_at,can_pick_vehicle) VALUES(?,?,?,?,1)", cid, "Zé", "tokv2", "2026-01-01T00:00:00+00:00")
+        logbook.fetch_points = lambda *a, **k: []
+        m = TestClient(app)
+        assert m.get("/d/tokv2", follow_redirects=True).status_code == 200
+        me = m.get("/d/api/me").json()
+        assert me["has_vehicle"] is False and me["can_pick_vehicle"] is True
+        # sem viatura, a condução pode ser manual; disponibilidade e jornada
+        assert m.post("/d/api/state", json={"state": "driving"}).json()["state"] == "driving"
+        st = m.post("/d/api/state", json={"state": "availability"}).json()
+        assert st["state"] == "availability" and st["journey_start"]
+        today = m.get(f"/d/api/day/{logbook.today_local().isoformat()}").json()
+        assert today["live"] == "availability" and today["limits"]["cont_max"] == 360
+        assert today["summary"]["availability"] >= 0 and today["bar"].count("a") >= 1
+        # nota do dia
+        assert m.post("/d/api/notes", json={"text": "Espera na carga"}).status_code == 200
+        assert m.post("/d/api/notes", json={"text": "  "}).status_code == 400
+        assert m.get(f"/d/api/day/{logbook.today_local().isoformat()}").json()["notes"][0]["text"] == "Espera na carga"
+        # escolher viatura no telemóvel: depois disso a condução é do GPS
+        assert len(m.get("/d/api/vehicles").json()) == 2
+        assert m.post("/d/api/vehicle", json={"provider": "gpswox", "device_id": "22"}).status_code == 200
+        assert m.get("/d/api/me").json()["vehicle"]["plate"] == "BB00BB"
+        assert m.post("/d/api/state", json={"state": "driving"}).status_code == 400
+        # encerrar jornada
+        st = m.post("/d/api/state", json={"state": "end"}).json()
+        assert st["state"] == "resting" and st["journey_start"] is None
+        # relatório de fiscalização (vários dias num só PDF), no telemóvel e no backoffice
+        r = m.get("/d/pdf/fiscalizacao?days=3")
+        assert r.status_code == 200 and r.content[:4] == b"%PDF"
+        from io import BytesIO
+        from pypdf import PdfReader
+        assert len(PdfReader(BytesIO(r.content)).pages) >= 3
+        c.post("/x/company/switch", json={"id": cid})
+        u = db.one("SELECT id FROM users WHERE email='admin'") or db.one("SELECT id FROM users LIMIT 1")
+        auth.add_member(cid, u["id"], "gestor")
+        assert c.get(f"/relatorios/fiscalizacao/{did}.pdf?days=2").content[:4] == b"%PDF"
+
+
+def test_limits_helper():
+    # 7 h seguidas de trabalho (84 períodos de 5 min) e uma pausa de 30 min a meio faz reiniciar o contínuo
+    L = logbook.limits("w" * 48 + "r" * 6 + "w" * 36)
+    assert L["day"] == (48 + 36) * 5 and L["cont"] == 36 * 5
+    L = logbook.limits("w" * 48 + "r" * 3 + "w" * 36)   # pausa curta não interrompe
+    assert L["cont"] == (48 + 36) * 5

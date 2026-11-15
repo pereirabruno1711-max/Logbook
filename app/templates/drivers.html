@@ -17,6 +17,7 @@
       <label><div class="small" style="font-weight:600;margin-bottom:4px">Nome</div><input id="dmName" style="width:100%"></label>
       <label><div class="small" style="font-weight:600;margin-bottom:4px">Telemóvel (opcional)</div><input id="dmPhone" style="width:100%"></label>
       <label><div class="small" style="font-weight:600;margin-bottom:4px">N.º da carta de condução (opcional)</div><input id="dmLic" style="width:100%"></label>
+      <label class="row small" style="gap:8px"><input type="checkbox" id="dmPick"> O motorista pode escolher a viatura no telemóvel</label>
     </div>
     <div class="row" style="justify-content:flex-end;margin-top:18px"><button class="btn sec" onclick="closeDrv()">Cancelar</button><button class="btn" onclick="saveDrv()">Guardar</button></div>
   </div>
@@ -49,7 +50,7 @@
 <script>
 const MANAGER = {{ 'true' if manager else 'false' }};
 let DRV = [], DEV = [], editId = null, asId = null, lkId = null;
-const STL = {working:'Trabalho', resting:'Descanso'};
+const STL = {working:'Trabalho', resting:'Descanso', availability:'Disponibilidade', driving:'Condução'};
 const fd = d => d ? d.split('-').reverse().join('/') : '—';
 async function load() {
   [DRV, DEV] = await Promise.all([api('/x/drivers'), api('/x/devices').then(r => r.devices)]);
@@ -64,10 +65,10 @@ async function load() {
 }
 const show = (m, ok) => msg.innerHTML = m ? `<div class="banner ${ok ? 'info' : 'warn'}" style="margin-bottom:14px">${esc(m)}</div>` : '';
 function openDrv(id) { editId = id || null; const d = DRV.find(x => x.id === id) || {};
-  dmTitle.textContent = id ? 'Editar motorista' : 'Novo motorista'; dmName.value = d.name || ''; dmPhone.value = d.phone || ''; dmLic.value = d.licence || '';
+  dmTitle.textContent = id ? 'Editar motorista' : 'Novo motorista'; dmName.value = d.name || ''; dmPhone.value = d.phone || ''; dmLic.value = d.licence || ''; dmPick.checked = !!d.can_pick_vehicle;
   drvModal.classList.remove('hidden'); setTimeout(() => dmName.focus(), 50); drvModal.dataset.active = id ? (d.active ? 1 : 0) : 1; }
 const closeDrv = () => drvModal.classList.add('hidden');
-async function saveDrv() { try { const body = {name: dmName.value, phone: dmPhone.value, licence: dmLic.value};
+async function saveDrv() { try { const body = {name: dmName.value, phone: dmPhone.value, licence: dmLic.value, can_pick_vehicle: dmPick.checked};
   if (editId) await api('/x/drivers/' + editId, {method:'POST', json: body}); else await api('/x/drivers', {method:'POST', json: body});
   closeDrv(); await load(); if (!editId) { const d = DRV.find(x => x.name === body.name.trim()); if (d) openLk(d.id); } } catch (e) { alert(e.message); } }
 function openAs(id) { asId = id; const d = DRV.find(x => x.id === id); asName.textContent = d.name;

@@ -14,8 +14,9 @@ from . import config
 from .utils import from_iso
 
 COL = {"d": colors.HexColor("#2563eb"), "w": colors.HexColor("#f59e0b"), "r": colors.HexColor("#cbd5e1"),
+       "a": colors.HexColor("#8b5cf6"),
        "-": colors.HexColor("#f1f5f9")}
-NAME = {"driving": "Condução", "working": "Trabalho", "resting": "Descanso"}
+NAME = {"driving": "Condução", "working": "Trabalho", "resting": "Descanso", "availability": "Disponibilidade"}
 INK, MUTE, LINE = colors.HexColor("#0f172a"), colors.HexColor("#64748b"), colors.HexColor("#e5e9f0")
 GREEN = colors.HexColor(config.BRAND_COLOR if config.BRAND_COLOR.startswith("#") else "#16a34a")
 
@@ -71,7 +72,7 @@ class Watermark:
         canv.restoreState()
 
 
-def render(snap, signature_dataurl, preview=False):
+def render(snap, signature_dataurl, preview=False, label=None):
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=16 * mm, rightMargin=16 * mm, topMargin=14 * mm,
                             bottomMargin=14 * mm, title=f"Diário de bordo {snap['day']}", author=config.APP_NAME)
@@ -98,17 +99,17 @@ def render(snap, signature_dataurl, preview=False):
                            ("BOTTOMPADDING", (0, 0), (-1, -1), 4)]))
     story += [t, Paragraph("Resumo do dia", h2)]
 
-    boxes = [[Paragraph(f"<b>{dur(sm['driving'])}</b><br/><font size=7 color='#64748b'>Condução</font>", p),
-              Paragraph(f"<b>{dur(sm['working'])}</b><br/><font size=7 color='#64748b'>Trabalho</font>", p),
-              Paragraph(f"<b>{dur(sm['resting'])}</b><br/><font size=7 color='#64748b'>Descanso</font>", p)]]
-    bt = Table(boxes, colWidths=[W / 3] * 3)
-    bt.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), 0.4, LINE), ("INNERGRID", (0, 0), (-1, -1), 0.4, LINE),
-                            ("LINEABOVE", (0, 0), (0, 0), 2, COL["d"]), ("LINEABOVE", (1, 0), (1, 0), 2, COL["w"]),
-                            ("LINEABOVE", (2, 0), (2, 0), 2, COL["r"]), ("TOPPADDING", (0, 0), (-1, -1), 6),
-                            ("BOTTOMPADDING", (0, 0), (-1, -1), 6), ("LEFTPADDING", (0, 0), (-1, -1), 8)]))
+    cells = [("driving", "Condução", "d"), ("working", "Trabalho", "w"), ("availability", "Disponibilidade", "a"), ("resting", "Descanso", "r")]
+    boxes = [[Paragraph(f"<b>{dur(sm.get(k, 0))}</b><br/><font size=7 color='#64748b'>{lab}</font>", p) for k, lab, _ in cells]]
+    bt = Table(boxes, colWidths=[W / 4] * 4)
+    style = [("BOX", (0, 0), (-1, -1), 0.4, LINE), ("INNERGRID", (0, 0), (-1, -1), 0.4, LINE), ("TOPPADDING", (0, 0), (-1, -1), 6),
+             ("BOTTOMPADDING", (0, 0), (-1, -1), 6), ("LEFTPADDING", (0, 0), (-1, -1), 8)]
+    style += [("LINEABOVE", (i, 0), (i, 0), 2, COL[c]) for i, (_, _, c) in enumerate(cells)]
+    bt.setStyle(TableStyle(style))
     story += [bt, Spacer(1, 8), Timeline(snap["bar"], W)]
     story.append(Paragraph("<font color='#2563eb'><b>Azul</b></font> condução &nbsp;|&nbsp; "
                            "<font color='#d97706'><b>Amarelo</b></font> trabalho &nbsp;|&nbsp; "
+                           "<font color='#7c3aed'><b>Roxo</b></font> disponibilidade &nbsp;|&nbsp; "
                            "<font color='#64748b'><b>Cinzento</b></font> descanso", small))
 
     story.append(Paragraph("Estados do dia", h2))
@@ -139,6 +140,8 @@ def render(snap, signature_dataurl, preview=False):
         story.append(Paragraph("Sem viagens registadas neste dia.", small))
     if v.get("notes"):
         story += [Paragraph("Observações", h2), Paragraph(v["notes"], p)]
+    if snap.get("notes"):
+        story += [Paragraph("Notas do motorista", h2)] + [Paragraph(f"<b>{n['time']}</b> &nbsp;{n['text']}", p) for n in snap["notes"]]
 
     # assinatura
     sig = []
@@ -162,7 +165,7 @@ def render(snap, signature_dataurl, preview=False):
         canv.drawRightString(A4[0] - 16 * mm, 8 * mm, f"Página {d.page}")
         canv.restoreState()
 
-    wm = Watermark("PRÉ-VISUALIZAÇÃO") if preview else None
+    wm = Watermark(label or "PRÉ-VISUALIZAÇÃO") if preview else None
 
     def first(canv, d):
         if wm:

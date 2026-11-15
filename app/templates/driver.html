@@ -3,14 +3,15 @@
 <title>{{ config.APP_NAME }}</title><meta name="theme-color" content="#0d2a47">
 <link rel="manifest" href="/manifest.webmanifest"><link rel="icon" href="/static/icon.svg"><link rel="apple-touch-icon" href="/static/icon.svg">
 <meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes">
-<link rel="stylesheet" href="/static/driver.css?v=1"></head>
+<link rel="stylesheet" href="/static/driver.css?v=2"></head>
 <body>
-<header class="top"><button class="back" id="back" style="display:none" aria-label="Voltar">‹</button><div class="ti"><b id="hTitle">{{ config.APP_NAME }}</b><span id="hSub">{{ driver.name }} · {{ company.name }}</span></div></header>
+<header class="top" id="top" style="display:none"><button class="back" id="back" aria-label="Voltar">‹</button><div class="ti"><b id="hTitle">{{ config.APP_NAME }}</b><span id="hSub">{{ driver.name }} · {{ company.name }}</span></div></header>
 <main id="main"><div class="card mute">A carregar…</div></main>
 <nav class="tabs" id="tabs">
-  <button data-tab="home" class="on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l9-8 9 8M5 10v10h14V10"/></svg>Início</button>
-  <button data-tab="days"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h9l4 4v14H6zM14 3v5h5M9 13h7M9 17h7"/></svg>Diário</button>
+  <button data-tab="days"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h9l4 4v14H6zM14 3v5h5M9 13h7M9 17h7"/></svg>Relatórios</button>
+  <button data-tab="home" class="mid on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Jornada</button>
+  <button data-tab="profile"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c1-4 4-6 8-6s7 2 8 6"/></svg>Perfil</button>
 </nav>
-<script src="/static/driver.js?v=1"></script>
+<script src="/static/driver.js?v=2"></script>
 <script>if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js', {scope: '/'}).catch(() => {});</script>
 </body></html>

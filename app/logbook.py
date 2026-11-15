@@ -23,9 +23,13 @@ from .utils import from_iso, iso, now_iso
 TZ = ZoneInfo(config.LOCAL_TZ)
 UTC = timezone.utc
 STEP = timedelta(minutes=config.PERIOD_MIN)
-STATE_LABEL = {"driving": "Condução", "working": "Trabalho", "resting": "Descanso"}
+STATE_LABEL = {"driving": "Condução", "working": "Trabalho", "resting": "Descanso", "availability": "Disponibilidade"}
+STATE_CHAR = {"driving": "d", "working": "w", "resting": "r", "availability": "a", "future": "-"}
+CHAR_STATE = {v: k for k, v in STATE_CHAR.items()}
 STATUS_LABEL = {"none": "Sem relatório", "filling": "Em preenchimento", "signed": "Assinado"}
-EDITABLE_STATES = ("working", "resting")
+EDITABLE_STATES = ("working", "resting", "availability")
+ACTIVE_STATES = ("working", "availability", "driving")   # estados que contam como «em jornada»
+SETTABLE = ("working", "resting", "availability", "driving", "end")
 WORK_CARRY_HOURS = 16          # «Trabalho» esquecido deixa de contar passadas estas horas
 HM = re.compile(r"^([01]?\d|2[0-4]):([0-5]\d)$")
 
@@ -153,51 +157,100 @@ def assignments_for(driver_id, s, e):
     return out
 
 
-def work_intervals(driver_id, s, e):
-    """Intervalos em que o motorista indicou «Trabalho» e que tocam [s, e)."""
+def state_intervals(driver_id, s, e):
+    """Intervalos (início, fim, estado) em que o motorista indicou Trabalho, Disponibilidade ou Condução
+    (manual, para quem não tem GPS) e que tocam [s, e). Descanso e «Encerrar jornada» são o estado por omissão."""
     prev = db.one("SELECT ts, state FROM driver_events WHERE driver_id=? AND ts<? ORDER BY ts DESC LIMIT 1", driver_id, s.isoformat())
     evs = db.q("SELECT ts, state FROM driver_events WHERE driver_id=? AND ts>=? AND ts<? ORDER BY ts", driver_id,
                s.isoformat(), e.isoformat())
     seq = ([prev] if prev else []) + evs
     out = []
     for i, ev in enumerate(seq):
-        if ev["state"] != "working":
+        if ev["state"] not in ACTIVE_STATES:
             continue
         a = from_iso(ev["ts"])
         b = from_iso(seq[i + 1]["ts"]) if i + 1 < len(seq) else e
         b = min(b, a + timedelta(hours=WORK_CARRY_HOURS), e)
         a = max(a, s)
         if b > a:
-            out.append((a, b))
+            out.append((a, b, ev["state"]))
     return out
+
+
+def journey_start(driver_id):
+    """Início da jornada em curso: primeiro estado ativo depois do último «Encerrar jornada»."""
+    last_end = db.one("SELECT ts FROM driver_events WHERE driver_id=? AND state='end' ORDER BY ts DESC LIMIT 1", driver_id)
+    q = "SELECT ts FROM driver_events WHERE driver_id=? AND state IN ('working','availability','driving')"
+    args = [driver_id]
+    if last_end:
+        q += " AND ts>?"
+        args.append(last_end["ts"])
+    first = db.one(q + " ORDER BY ts LIMIT 1", *args)
+    if not first or from_iso(first["ts"]) < datetime.now(UTC) - timedelta(hours=config.JOURNEY_MAX_HOURS):
+        return None
+    return first["ts"]
 
 
 def current_state(driver_id):
     ev = db.one("SELECT ts, state FROM driver_events WHERE driver_id=? ORDER BY ts DESC LIMIT 1", driver_id)
-    if not ev or ev["state"] != "working":
-        return {"state": "resting", "since": ev["ts"] if ev else None}
-    if from_iso(ev["ts"]) < datetime.now(UTC) - timedelta(hours=WORK_CARRY_HOURS):
-        return {"state": "resting", "since": None}
-    return {"state": "working", "since": ev["ts"]}
+    js = journey_start(driver_id)
+    if not ev or ev["state"] not in ACTIVE_STATES + ("resting",):
+        return {"state": "resting", "since": ev["ts"] if ev else None, "journey_start": None}
+    stale = from_iso(ev["ts"]) < datetime.now(UTC) - timedelta(hours=WORK_CARRY_HOURS)
+    if ev["state"] in ACTIVE_STATES and stale:
+        return {"state": "resting", "since": None, "journey_start": None}
+    return {"state": ev["state"], "since": ev["ts"], "journey_start": js}
 
 
 def set_state(driver_id, state):
-    if state not in EDITABLE_STATES:
+    if state not in SETTABLE:
         raise LogbookError("Estado inválido.")
-    if current_state(driver_id)["state"] != state:
+    cur = db.one("SELECT state FROM driver_events WHERE driver_id=? ORDER BY ts DESC LIMIT 1", driver_id)
+    if not cur or cur["state"] != state:
         db.run("INSERT INTO driver_events(driver_id,ts,state) VALUES(?,?,?)", driver_id, now_iso(), state)
     return current_state(driver_id)
 
 
+def has_vehicle(driver_id):
+    return db.one("SELECT 1 AS x FROM assignments WHERE driver_id=? AND to_ts IS NULL", driver_id) is not None
+
+
+def limits(bar):
+    """Horas contínuas em trabalho e horas trabalhadas no dia (condução + trabalho), a partir da barra do dia."""
+    step, cont, rest_run, day = config.PERIOD_MIN, 0, 0, 0
+    for ch in bar:
+        if ch in "dw":
+            day += step
+            cont += step
+            rest_run = 0
+        elif ch in "ra":
+            rest_run += step
+            if rest_run >= config.BREAK_MIN:
+                cont = 0
+    return {"cont": cont, "cont_max": config.LIMIT_CONT_WORK_MIN, "day": day, "day_max": config.LIMIT_DAY_WORK_MIN}
+
+
+def notes_for(driver_id, s, e):
+    return [{"time": hm_label(from_iso(n["ts"])), "text": n["text"]} for n in
+            db.q("SELECT ts, text FROM driver_notes WHERE driver_id=? AND ts>=? AND ts<? ORDER BY ts", driver_id, s.isoformat(), e.isoformat())]
+
+
+def add_note(company, driver, text):
+    text = (text or "").strip()
+    if not text:
+        raise LogbookError("Escreva a nota.")
+    db.run("INSERT INTO driver_notes(company_id,driver_id,ts,text) VALUES(?,?,?,?)", company["id"], driver["id"], now_iso(), text[:500])
+
+
 # ---------- validação das correções ----------
-def clean_edits(edits):
+def clean_edits(edits, allow_driving=False):
     out = []
     for ed in (edits or [])[:30]:
         a, b = hm_minutes(ed.get("from")), hm_minutes(ed.get("to"))
         if a >= b:
             raise LogbookError("A hora final tem de ser depois da inicial.")
-        if ed.get("state") not in EDITABLE_STATES:
-            raise LogbookError("Só pode escolher Trabalho ou Descanso (a condução é detetada automaticamente).")
+        if ed.get("state") not in EDITABLE_STATES + (("driving",) if allow_driving else ()):
+            raise LogbookError("Só pode escolher Trabalho, Descanso ou Disponibilidade (a condução é detetada pelo GPS).")
         out.append({"from": f"{a // 60:02d}:{a % 60:02d}", "to": f"{b // 60:02d}:{b % 60:02d}" if b < 1440 else "24:00",
                     "state": ed["state"]})
     return out
@@ -253,12 +306,13 @@ def compute_day(company, driver, day, data=None, now=None):
     is_today = s <= now < e
     states = ["resting"] * n
 
-    # trabalho indicado na app
-    for a, b in work_intervals(driver["id"], s, e):
+    # estados indicados na app (Trabalho, Disponibilidade e, sem GPS, Condução)
+    for a, b, st in state_intervals(driver["id"], s, e):
         i0 = int((a - s) / STEP)
         i1 = min(n, math.ceil((b - s) / STEP))
         for i in range(i0, i1):
-            states[i] = "working"
+            states[i] = st
+    gps_drv = [False] * n
 
     # condução detetada pelo GPS do objeto atribuído
     gps_error, asg, pts_all, per_asg = None, assignments_for(driver["id"], s, e), [], {}
@@ -275,6 +329,7 @@ def compute_day(company, driver, day, data=None, now=None):
                 i = int((p.ts - s) / STEP)
                 if 0 <= i < n:
                     states[i] = "driving"
+                    gps_drv[i] = True
     pts_all.sort(key=lambda p: p.ts)
 
     # correções do motorista (nunca em períodos de condução)
@@ -282,7 +337,7 @@ def compute_day(company, driver, day, data=None, now=None):
     for ed in edits:
         a, b = hm_minutes(ed["from"]), hm_minutes(ed["to"])
         for i in range(n):
-            if states[i] == "driving":
+            if gps_drv[i]:
                 continue
             m = (s + i * STEP).astimezone(TZ)
             mm = m.hour * 60 + m.minute
@@ -301,10 +356,10 @@ def compute_day(company, driver, day, data=None, now=None):
         st = states[i]
         segments.append({"state": st, "label": STATE_LABEL[st], "start": hm_label(s + i * STEP),
                          "end": hm_label(s + (j + 1) * STEP, e), "minutes": (j - i + 1) * config.PERIOD_MIN,
-                         "locked": st == "driving"})
+                         "locked": st == "driving" and bool(asg)})
         i = j + 1
 
-    mins = {k: sum(1 for x in states if x == k) * config.PERIOD_MIN for k in ("driving", "working", "resting")}
+    mins = {k: sum(1 for x in states if x == k) * config.PERIOD_MIN for k in ("driving", "working", "resting", "availability")}
     km = sum(_path_km(p) for p in per_asg.values())
     summary = dict(mins, total=sum(mins.values()), km=round(km, 1))
 
@@ -365,11 +420,11 @@ def compute_day(company, driver, day, data=None, now=None):
             _odo_from_history(company, b, per_asg.get(b["id"], []), s, e, summary["km"], vehicle)
     vehicle["km_gps"] = summary["km"]             # a app soma isto ao inicial para sugerir o final
 
-    bar = "".join({"driving": "d", "working": "w", "resting": "r", "future": "-"}[x] for x in states)
+    bar = "".join(STATE_CHAR[x] for x in states)
     return {"day": day, "driver": {"id": driver["id"], "name": driver["name"]}, "is_today": is_today,
             "past": e <= now, "gps_ok": gps_error is None, "gps_error": gps_error, "has_vehicle": bool(asg),
             "bar": bar, "period_min": config.PERIOD_MIN, "segments": segments, "summary": summary, "trips": out_trips,
-            "vehicle": vehicle, "edits": edits}
+            "vehicle": vehicle, "edits": edits, "notes": notes_for(driver["id"], s, e)}
 
 
 def _odo_from_history(company, a, pts, s, e, day_km, vehicle):
@@ -408,6 +463,9 @@ def view_day(company, driver, day):
     data = lb_data(lb)
     out.update(status=lb["status"] if lb else "none", editable=out["past"], step=data.get("step", 1),
                logbook_id=lb["id"] if lb else None)
+    if out["is_today"]:
+        out["limits"] = limits(out["bar"])
+        out["live"] = CHAR_STATE.get(out["bar"].rstrip("-")[-1:] or "r", "resting")
     return out
 
 
@@ -420,7 +478,7 @@ def save_data(company, driver, day, patch):
         raise LogbookError("Este relatório já está assinado e não pode ser alterado.")
     data = lb_data(lb)
     if "edits" in patch:
-        data["edits"] = clean_edits(patch["edits"])
+        data["edits"] = clean_edits(patch["edits"], allow_driving=not assignments_for(driver["id"], s, e))
     if "vehicle" in patch:
         data["vehicle"] = {**(data.get("vehicle") or {}), **clean_vehicle(patch["vehicle"])}
     if "trip_notes" in patch:
@@ -482,8 +540,8 @@ def sign(company, driver, day, signature, ip=None):
     return view_day(company, driver, day)
 
 
-def preview_pdf(company, driver, day):
-    """PDF de pré-visualização (sem assinatura) ou o PDF assinado, se já existir."""
+def day_pdf(company, driver, day, label=None):
+    """PDF do dia: o assinado, se existir; senão, o calculado agora com marca de água (label)."""
     from . import pdfgen
     lb = get_logbook(company["id"], driver["id"], day)
     if lb and lb["status"] == "signed" and lb["pdf_path"]:
@@ -491,7 +549,29 @@ def preview_pdf(company, driver, day):
             return f.read()
     snap = compute_day(company, driver, day, lb_data(lb))
     snap.update(company={"id": company["id"], "name": company["name"], "nif": company.get("nif")}, signed_name=driver["name"])
-    return pdfgen.render(snap, None, preview=True)
+    return pdfgen.render(snap, None, preview=True, label=label)
+
+
+def preview_pdf(company, driver, day):
+    """PDF de pré-visualização (sem assinatura) ou o PDF assinado, se já existir."""
+    return day_pdf(company, driver, day)
+
+
+def inspection_pdf(company, driver, days=7):
+    """Um único PDF com os últimos N dias (hoje incluído) para mostrar numa fiscalização. Dias por assinar levam a marca
+    «NÃO ASSINADO» e o dia em curso «EM CURSO»."""
+    from io import BytesIO
+    from pypdf import PdfReader, PdfWriter
+    today = today_local()
+    w = PdfWriter()
+    for k in range(max(1, min(int(days), 31))):
+        day = (today - timedelta(days=k)).isoformat()
+        pdf = day_pdf(company, driver, day, label="EM CURSO" if k == 0 else "NÃO ASSINADO")
+        for page in PdfReader(BytesIO(pdf)).pages:
+            w.add_page(page)
+    out = BytesIO()
+    w.write(out)
+    return out.getvalue()
 
 
 def day_list(company, driver, days=None):

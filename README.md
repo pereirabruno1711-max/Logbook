@@ -2,6 +2,9 @@
 
 Digitaliza e automatiza o diário de bordo dos motoristas (solução «Logbook» da FMS), construído sobre a mesma base da app Auditoria Via Verde: FastAPI + SQLite, empresas, gestores/utilizadores, superadministrador, GPSWox e Trust Track.
 
+## App do motorista (v2)
+Três separadores: **Jornada** (cronómetro «Tempo em jornada», quatro estados — Condução (automática pelo GPS), Trabalho, Descanso e Disponibilidade —, «Encerrar jornada», limites de horas contínuas e diárias, «Escrever nota»), **Relatórios** (assinatura em 3 passos e «Mostrar à fiscalização», um PDF com os últimos 1, 7 ou 28 dias) e **Perfil** (dados, privacidade e, se o gestor permitir, mudança de viatura). Os limites mostrados são `LIMIT_CONT_WORK_MIN` (6 h), `LIMIT_DAY_WORK_MIN` (10 h) e a pausa que os reinicia `BREAK_MIN` (30 min): confirme-os com a legislação aplicável.
+
 ## Como funciona
 - **Estados do motorista**: na app (link pessoal, no telemóvel) escolhe *Trabalho* ou *Descanso*. A **condução** é detetada automaticamente pelo objeto GPS atribuído.
 - **Geração**: o dia divide-se em períodos de 5 min. Algum ponto com velocidade > 1 km/h → condução; senão, «Trabalho» indicado na app → trabalho; senão → descanso.

@@ -1,12 +1,18 @@
-/* App do motorista — estado (Trabalho/Descanso), lista de diários e assinatura em 3 passos */
+/* App do motorista v2 — Jornada (4 estados, cronómetro, limites, notas), Relatórios (assinatura em 3 passos) e Perfil */
 const $ = s => document.querySelector(s);
 const esc = s => (s ?? '').toString().replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
-const STL = {driving: 'Condução', working: 'Trabalho', resting: 'Descanso'};
-const hm = m => Math.floor((m || 0) / 60) + 'h' + String((m || 0) % 60).padStart(2, '0');
+const STL = {driving: 'Condução', working: 'Trabalho', resting: 'Descanso', availability: 'Disponibilidade'};
+const ICON = {
+  driving: '<circle cx="24" cy="24" r="18"/><circle cx="24" cy="24" r="4"/><path d="M6.5 24H20M28 24h13.5M24 28v14"/>',
+  working: '<path d="M31 7a11 11 0 0 0-10 14L7 35a4.2 4.2 0 0 0 6 6l14-14a11 11 0 0 0 14-10l-7 4-5-5z"/>',
+  resting: '<path d="M6 10v28M6 31h36v7M6 31v-9h17v9"/><circle cx="14" cy="16" r="3"/>',
+  availability: '<circle cx="24" cy="24" r="18"/><path d="M24 12v12l8 5"/>'};
+const svg = k => `<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">${ICON[k]}</svg>`;
+const hm = m => Math.floor((m || 0) / 60) + 'h' + String(Math.round(m || 0) % 60).padStart(2, '0');
 const fmtDay = d => new Date(d + 'T12:00:00').toLocaleDateString('pt-PT', {weekday: 'long', day: 'numeric', month: 'long'});
 const kmf = v => (v ?? 0).toLocaleString('pt-PT', {minimumFractionDigits: 1, maximumFractionDigits: 1});
 const main = $('#main'), back = $('#back');
-let ME = null, TAB = 'home', DAY = null, D = null, STEP = 1, busy = false;
+let ME = null, TAB = 'home', DAY = null, D = null, STEP = 1, tick = null, poll = null;
 
 async function api(url, opts = {}) {
   const o = Object.assign({headers: {}}, opts);
@@ -17,59 +23,102 @@ async function api(url, opts = {}) {
   if (!r.ok) throw new Error((data && (data.erro || data.detail)) || r.statusText);
   return data;
 }
+function toast(m) { const t = document.createElement('div'); t.className = 'toast'; t.textContent = m; document.body.appendChild(t); setTimeout(() => t.remove(), 2600); }
 const fail = e => { main.insertAdjacentHTML('afterbegin', `<div class="err">${esc(e.message)}</div>`); window.scrollTo(0, 0); };
-const bar = (b) => `<div class="tl">${[...b].map(c => `<i class="${c === '-' ? 'f' : c}"></i>`).join('')}</div>
-  <div class="tlh"><span>00</span><span>06</span><span>12</span><span>18</span><span>24</span></div>`;
-const sumBoxes = s => `<div class="sum"><div class="d"><b>${hm(s.driving)}</b><span>Condução</span></div><div class="w"><b>${hm(s.working)}</b><span>Trabalho</span></div><div class="r"><b>${hm(s.resting)}</b><span>Descanso</span></div></div>`;
+const bar = b => `<div class="tl">${[...b].map(c => `<i class="${c === '-' ? 'f' : c}"></i>`).join('')}</div><div class="tlh"><span>00</span><span>06</span><span>12</span><span>18</span><span>24</span></div>`;
+const sumBoxes = s => `<div class="sum s4"><div class="d"><b>${hm(s.driving)}</b><span>Condução</span></div><div class="w"><b>${hm(s.working)}</b><span>Trabalho</span></div><div class="a"><b>${hm(s.availability)}</b><span>Disponib.</span></div><div class="r"><b>${hm(s.resting)}</b><span>Descanso</span></div></div>`;
 
-function setHeader(title, sub, showBack) {
-  $('#hTitle').textContent = title; $('#hSub').textContent = sub; back.style.display = showBack ? '' : 'none';
-  $('#tabs').style.display = showBack ? 'none' : '';
+function chrome(showBack, title, sub) {
+  $('#top').style.display = showBack ? '' : 'none'; $('#tabs').style.display = showBack ? 'none' : '';
+  if (showBack) { $('#hTitle').textContent = title; $('#hSub').textContent = sub; }
+  main.className = showBack ? '' : (TAB === 'home' ? 'home' : '');
 }
-document.querySelectorAll('#tabs button').forEach(b => b.onclick = () => { TAB = b.dataset.tab; render(); });
+document.querySelectorAll('#tabs button').forEach(b => b.onclick = () => { TAB = b.dataset.tab; DAY = null; render(); });
 back.onclick = () => { DAY = null; render(); };
 
 async function render() {
+  clearInterval(tick); clearInterval(poll);
   document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === TAB));
   try {
-    if (!ME) ME = await api('/d/api/me');
+    ME = await api('/d/api/me');
     if (DAY) return renderDay();
-    setHeader(ME.app, `${ME.driver.name} · ${ME.company}`, false);
-    return TAB === 'home' ? renderHome() : renderDays();
+    chrome(false);
+    return ({home: renderHome, days: renderDays, profile: renderProfile})[TAB]();
   } catch (e) { fail(e); }
 }
 
-// ---------- início ----------
+// ---------- jornada (início) ----------
+const clock = ms => { const s = Math.max(0, Math.floor(ms / 1000)); return [Math.floor(s / 3600), Math.floor(s % 3600 / 60), s % 60].map(x => String(x).padStart(2, '0')).join(':'); };
+function lim(label, v, max) {
+  const pct = Math.min(100, v / max * 100), cls = v >= max ? 'over' : v >= max * .8 ? 'mid' : '';
+  return `<div class="r"><b>${label}</b><span>${hm(v)} <span class="mute">/ máx. ${hm(max)}</span></span></div><div class="pb ${cls}"><i style="width:${pct}%"></i></div>`;
+}
 async function renderHome() {
-  ME = await api('/d/api/me');
-  const st = ME.state.state;
   const today = await api('/d/api/day/' + ME.today);
-  const days = await api('/d/api/days');
-  const pend = days.filter(d => d.can_sign && d.status !== 'signed').slice(0, 7).length;
+  const st = ME.state, live = today.live === 'driving' ? 'driving' : (st.state || 'resting');
+  const js = st.journey_start ? new Date(st.journey_start).getTime() : null;
+  const tile = k => `<button class="tile ${k} ${live === k ? 'on' : ''}" data-s="${k}" ${k === 'driving' && ME.has_vehicle ? 'disabled' : ''}>${svg(k)}${STL[k]}${k === 'driving' && ME.has_vehicle ? '<small>automático (GPS)</small>' : ''}</button>`;
+  const L = today.limits || {cont: 0, cont_max: 360, day: 0, day_max: 600};
+  const pend = (await api('/d/api/days')).filter(d => d.can_sign && d.status !== 'signed').slice(0, 7).length;
   main.innerHTML = `
-    <div class="card"><h2>O meu estado</h2>
-      <div class="state">
-        <button class="working ${st === 'working' ? 'on' : ''}" data-s="working">Trabalho<small>em serviço</small></button>
-        <button class="resting ${st === 'resting' ? 'on' : ''}" data-s="resting">Descanso<small>fora de serviço</small></button>
-      </div>
-      <p class="small mute" style="margin:12px 0 0">${ME.has_vehicle ? 'A <b>condução</b> é detetada automaticamente pelo GPS do veículo atribuído.' : '<b>Sem veículo atribuído</b> — peça ao seu gestor para lhe atribuir um objeto GPS.'}</p></div>
-    <div class="card"><h2>Hoje</h2>${sumBoxes(today.summary)}${bar(today.bar)}</div>
-    ${pend ? `<div class="warn">Tem <b>${pend}</b> dia${pend > 1 ? 's' : ''} por assinar nos últimos 7 dias.</div><button class="btn" id="goDays">Ver diário</button>` : '<div class="info">Está tudo assinado. Bom trabalho!</div>'}`;
-  main.querySelectorAll('.state button').forEach(b => b.onclick = async () => {
+    <div class="card jour"><div><div class="tm" id="tm">${js ? clock(Date.now() - js) : '—'}</div><div class="lb">Tempo em jornada</div></div><div class="cur">${svg(live)}</div></div>
+    ${ME.has_vehicle ? '' : '<div class="warn">Sem viatura atribuída: a <b>condução</b> é registada por si. Peça ao gestor um objeto GPS para ser automática.</div>'}
+    <div class="tiles">${['driving', 'working', 'resting', 'availability'].map(tile).join('')}</div>
+    ${js ? '<button class="btn pill" id="endJ">Encerrar jornada</button>' : '<p class="small mute" style="text-align:center;margin:0 0 16px">Escolha um estado para iniciar a jornada.</p>'}
+    <div class="card lim">${lim('Horas contínuas em trabalho', L.cont, L.cont_max)}${lim('Horas diárias trabalhadas', L.day, L.day_max)}</div>
+    <button class="btn line" id="note">✎ Escrever nota${today.notes && today.notes.length ? ` (${today.notes.length})` : ''}</button>
+    ${pend ? `<div class="warn" style="margin-top:16px">Tem <b>${pend}</b> dia${pend > 1 ? 's' : ''} por assinar. <a href="#" id="goDays">Ver relatórios</a></div>` : ''}`;
+  main.querySelectorAll('.tile:not([disabled])').forEach(b => b.onclick = async () => {
     try { await api('/d/api/state', {method: 'POST', json: {state: b.dataset.s}}); renderHome(); } catch (e) { fail(e); } });
-  const g = $('#goDays'); if (g) g.onclick = () => { TAB = 'days'; render(); };
+  const e = $('#endJ'); if (e) e.onclick = async () => { if (!confirm('Encerrar a jornada de hoje?')) return;
+    try { await api('/d/api/state', {method: 'POST', json: {state: 'end'}}); toast('Jornada encerrada'); renderHome(); } catch (x) { fail(x); } };
+  $('#note').onclick = noteSheet;
+  const g = $('#goDays'); if (g) g.onclick = ev => { ev.preventDefault(); TAB = 'days'; render(); };
+  if (js) tick = setInterval(() => { const t = $('#tm'); if (t) t.textContent = clock(Date.now() - js); }, 1000);
+  poll = setInterval(() => { if (!document.hidden) renderHome(); }, 60000);
+}
+function sheet(html) { const o = document.createElement('div'); o.className = 'ov'; o.innerHTML = `<div class="sheet">${html}</div>`;
+  o.onclick = ev => { if (ev.target === o) o.remove(); }; document.body.appendChild(o); return o; }
+function noteSheet() {
+  const o = sheet(`<h2>Escrever nota</h2><textarea id="nt" rows="4" maxlength="500" placeholder="Ex.: avaria, espera na carga, desvio…"></textarea>
+    <div class="btns two"><button class="btn sec" id="nc">Cancelar</button><button class="btn" id="ns">Guardar</button></div>`);
+  $('#nc').onclick = () => o.remove();
+  $('#ns').onclick = async () => { try { await api('/d/api/notes', {method: 'POST', json: {text: $('#nt').value}}); o.remove(); toast('Nota guardada'); renderHome(); } catch (e) { alert(e.message); } };
+  setTimeout(() => $('#nt').focus(), 80);
 }
 
-// ---------- lista ----------
+// ---------- relatórios (lista) ----------
 const PILL = {none: 'Sem relatório', filling: 'Em preenchimento', signed: 'Assinado'};
 async function renderDays() {
   const days = await api('/d/api/days');
-  main.innerHTML = days.map(d => `<div class="day" data-d="${d.day}"><div class="t"><b>${d.today ? 'Hoje' : fmtDay(d.day)}</b><span>${d.today ? fmtDay(d.day) : d.day.split('-').reverse().join('/')}</span></div>
-    <span class="pill ${d.status}">${PILL[d.status]}</span></div>`).join('');
+  main.innerHTML = `<div class="card"><h2>Mostrar à fiscalização</h2><p class="small mute" style="margin-top:0">Um só PDF com os dias mais recentes. Os dias por assinar aparecem assinalados.</p>
+      <div class="fisc"><a class="btn sec" target="_blank" href="/d/pdf/fiscalizacao?days=1">Hoje</a><a class="btn sec" target="_blank" href="/d/pdf/fiscalizacao?days=7">7 dias</a><a class="btn sec" target="_blank" href="/d/pdf/fiscalizacao?days=28">28 dias</a></div></div>` +
+    days.map(d => `<div class="day" data-d="${d.day}"><div class="t"><b>${d.today ? 'Hoje' : fmtDay(d.day)}</b><span>${d.today ? fmtDay(d.day) : d.day.split('-').reverse().join('/')}</span></div><span class="pill ${d.status}">${PILL[d.status]}</span></div>`).join('');
   main.querySelectorAll('.day').forEach(el => el.onclick = () => { DAY = el.dataset.d; STEP = 0; render(); });
 }
 
-// ---------- dia ----------
+// ---------- perfil ----------
+async function renderProfile() {
+  const v = ME.vehicle;
+  main.innerHTML = `<div class="card" style="text-align:center"><div class="avatar">${esc(ME.driver.name.split(' ').map(x => x[0]).slice(0, 2).join('').toUpperCase())}</div><b style="font-size:18px">${esc(ME.driver.name)}</b><div class="mute small">${esc(ME.company)}</div></div>
+    <div class="card"><h2>Dados</h2><div class="kv"><span>Telemóvel</span><b>${esc(ME.driver.phone) || '—'}</b></div><div class="kv"><span>Carta de condução</span><b>${esc(ME.driver.licence) || '—'}</b></div></div>
+    <div class="card"><h2>Viatura</h2><div class="kv"><span>Atual</span><b>${v ? esc(v.name) + (v.plate ? ' · ' + esc(v.plate) : '') : 'Nenhuma'}</b></div>
+      ${ME.can_pick_vehicle ? '<button class="btn sec" id="chg" style="margin-top:10px">Mudar de viatura</button>' : '<p class="small mute" style="margin:8px 0 0">A viatura é atribuída pelo seu gestor.</p>'}</div>
+    <div class="card"><h2>Privacidade</h2><p class="small mute" style="margin:0">Esta app regista os estados de trabalho que indicar e usa a posição GPS da viatura atribuída para detetar a condução, as viagens e a distância. Os dados pertencem à sua empresa (${esc(ME.company)}) e servem para o registo dos tempos de trabalho. Para saber mais ou exercer os seus direitos, fale com o seu gestor.</p></div>
+    <a class="btn sec" href="/d/sair">Terminar sessão neste telemóvel</a>`;
+  const c = $('#chg'); if (c) c.onclick = vehicleSheet;
+}
+async function vehicleSheet() {
+  try {
+    const list = await api('/d/api/vehicles');
+    const o = sheet(`<h2>Escolher viatura</h2>${list.map(x => `<div class="opt ${ME.vehicle && ME.vehicle.name === x.name ? 'on' : ''}" data-p="${esc(x.provider)}" data-i="${esc(x.device_id)}"><b>${esc(x.name)}</b><span class="mute small">${esc(x.plate || '')}</span></div>`).join('') || '<p class="mute">Sem viaturas.</p>'}
+      <button class="btn sec" id="vc">Fechar</button>`);
+    $('#vc').onclick = () => o.remove();
+    o.querySelectorAll('.opt').forEach(el => el.onclick = async () => { try { await api('/d/api/vehicle', {method: 'POST', json: {provider: el.dataset.p, device_id: el.dataset.i}}); o.remove(); toast('Viatura atualizada'); render(); } catch (e) { alert(e.message); } });
+  } catch (e) { alert(e.message); }
+}
+
+// ---------- dia (revisão, viatura, assinatura) ----------
 async function renderDay() {
   main.innerHTML = '<div class="card mute">A carregar…</div>';
   D = await api('/d/api/day/' + DAY);
@@ -77,35 +126,31 @@ async function renderDay() {
   drawDay();
 }
 async function save(patch) { D = await api('/d/api/day/' + DAY, {method: 'POST', json: patch}); }
-function head() {
-  setHeader(D.is_today ? 'Hoje' : fmtDay(DAY), `${D.driver.name} · ${PILL[D.status]}`, true);
-}
-function stepper() {
-  return `<div class="steps">${['Dia', 'Viatura', 'Assinatura'].map((t, i) => `<div class="${STEP === i + 1 ? 'on' : STEP > i + 1 ? 'done' : ''}">${i + 1}. ${t}</div>`).join('')}</div>`;
-}
+function stepper() { return `<div class="steps">${['Dia', 'Viatura', 'Assinatura'].map((t, i) => `<div class="${STEP === i + 1 ? 'on' : STEP > i + 1 ? 'done' : ''}">${i + 1}. ${t}</div>`).join('')}</div>`; }
 function drawDay() {
-  head();
+  chrome(true, D.is_today ? 'Hoje' : fmtDay(DAY), `${D.driver.name} · ${PILL[D.status]}`);
   if (D.status === 'signed') return drawSigned();
   if (!D.editable) return drawToday();
   main.innerHTML = stepper() + (D.gps_ok ? '' : `<div class="warn">${esc(D.gps_error)} Os valores abaixo podem estar incompletos.</div>`) + '<div id="step"></div>';
   ({1: step1, 2: step2, 3: step3})[STEP]();
 }
+const notesBox = () => D.notes && D.notes.length ? `<div class="card"><h2>Notas</h2>${D.notes.map(n => `<div class="kv"><span>${n.time}</span><b style="font-weight:500;text-align:right">${esc(n.text)}</b></div>`).join('')}</div>` : '';
 function drawToday() {
   main.innerHTML = `<div class="info">O dia ainda não terminou. Só pode assinar depois da meia-noite.</div>${sumBoxes(D.summary)}<div class="card">${bar(D.bar)}</div>
-    <div class="card"><h2>Estados</h2>${segs()}</div><a class="btn sec" href="/d/pdf/${DAY}" target="_blank">Pré-visualizar PDF</a>`;
+    <div class="card"><h2>Estados</h2>${segs()}</div>${notesBox()}<a class="btn sec" href="/d/pdf/${DAY}" target="_blank">Pré-visualizar PDF</a>`;
 }
 function segs() {
   return D.segments.map(s => `<div class="seg"><span class="dot ${s.state}"></span><div class="t"><b>${STL[s.state]}</b><span>${s.start} – ${s.end}${s.locked ? ' · automático' : ''}</span></div><span class="du">${hm(s.minutes)}</span></div>`).join('') || '<span class="mute">Sem dados.</span>';
 }
-
 function step1() {
   const ed = D.edits || [];
+  const opts = ['working', 'resting', 'availability'].concat(D.has_vehicle ? [] : ['driving']);
   $('#step').innerHTML = `${sumBoxes(D.summary)}<div class="card">${bar(D.bar)}</div>
-    <div class="card"><h2>Estados do dia</h2>${segs()}</div>
+    <div class="card"><h2>Estados do dia</h2>${segs()}</div>${notesBox()}
     <div class="card"><h2>Corrigir um período</h2>
-      <p class="small mute" style="margin-top:0">Pode alterar períodos de <b>Trabalho</b> e <b>Descanso</b>. A condução (a azul) é detetada pelo GPS e não se altera.</p>
+      <p class="small mute" style="margin-top:0">${D.has_vehicle ? 'Pode alterar períodos de Trabalho, Descanso e Disponibilidade. A condução (a azul) é detetada pelo GPS e não se altera.' : 'Sem viatura atribuída, pode indicar também períodos de condução.'}</p>
       <div class="grid3"><label class="f"><span>De</span><input type="time" id="eFrom" value="08:00"></label><label class="f"><span>Até</span><input type="time" id="eTo" value="09:00"></label>
-        <label class="f"><span>Estado</span><select id="eSt"><option value="working">Trabalho</option><option value="resting">Descanso</option></select></label></div>
+        <label class="f"><span>Estado</span><select id="eSt">${opts.map(o => `<option value="${o}">${STL[o]}</option>`).join('')}</select></label></div>
       <button class="btn sec" id="eAdd">Aplicar correção</button>
       ${ed.length ? '<div style="margin-top:12px">' + ed.map((e, i) => `<div class="edit"><span>${e.from} – ${e.to} → <b>${STL[e.state]}</b></span><button data-i="${i}" aria-label="Remover">✕</button></div>`).join('') + '</div>' : ''}</div>
     <div class="btns"><button class="btn" id="next">Guardar e continuar</button><div class="btns two"><button class="btn sec" id="later">Guardar para depois</button><a class="btn sec" href="/d/pdf/${DAY}" target="_blank">Pré-visualizar PDF</a></div></div>`;
@@ -114,7 +159,6 @@ function step1() {
   $('#next').onclick = async () => { try { await save({step: 2, edits: ed}); STEP = 2; drawDay(); window.scrollTo(0, 0); } catch (e) { fail(e); } };
   $('#later').onclick = async () => { try { await save({step: 1, edits: ed}); DAY = null; TAB = 'days'; render(); } catch (e) { fail(e); } };
 }
-
 function step2() {
   const v = D.vehicle;
   const trips = D.trips.map(t => `<div class="trip"><div class="h"><span>Viagem ${t.n}</span><span>${t.start} – ${t.end}</span></div>
@@ -142,7 +186,6 @@ function step2() {
     if (!$('#vOk').checked) return fail(new Error('Marque a confirmação para continuar.'));
     try { await save(collect(3)); STEP = 3; drawDay(); window.scrollTo(0, 0); } catch (e) { fail(e); } };
 }
-
 function step3() {
   $('#step').innerHTML = `<div class="card"><h2>Resumo</h2>${sumBoxes(D.summary)}
       <p class="small mute" style="margin:0">${D.vehicle.plate ? 'Viatura <b>' + esc(D.vehicle.plate) + '</b> · ' : ''}${D.trips.length} viagem${D.trips.length === 1 ? '' : 's'} · ${kmf(D.summary.km)} km</p>
@@ -168,11 +211,9 @@ function step3() {
     catch (e) { b.disabled = false; b.textContent = 'Assinar e concluir'; fail(e); }
   };
 }
-
 function drawSigned() {
   main.innerHTML = `<div class="ok"><div class="big">✓</div><h2 style="margin:0">Relatório assinado</h2><p class="mute small">${new Date(D.signed_at).toLocaleString('pt-PT')}</p></div>
-    ${sumBoxes(D.summary)}<div class="card">${bar(D.bar)}</div><div class="card"><h2>Estados do dia</h2>${segs()}</div>
+    ${sumBoxes(D.summary)}<div class="card">${bar(D.bar)}</div><div class="card"><h2>Estados do dia</h2>${segs()}</div>${notesBox()}
     <a class="btn" href="/d/pdf/${DAY}" target="_blank">Descarregar PDF</a>`;
 }
-
 render();

@@ -6,3 +6,4 @@ httpx==0.28.1
 python-dateutil==2.9.0.post0
 reportlab>=4.2,<6
 tzdata
+pypdf>=4,<6

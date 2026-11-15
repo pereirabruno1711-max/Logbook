@@ -52,6 +52,9 @@ CREATE TABLE IF NOT EXISTS alerts(
 CREATE TABLE IF NOT EXISTS odometer_log(
     company_id INTEGER, provider TEXT, device_id TEXT, snap_day TEXT, km REAL, ts TEXT,
     PRIMARY KEY(company_id, provider, device_id, snap_day));
+CREATE TABLE IF NOT EXISTS driver_notes(
+    id INTEGER PRIMARY KEY AUTOINCREMENT, company_id INTEGER, driver_id INTEGER, ts TEXT, text TEXT);
+CREATE INDEX IF NOT EXISTS ix_note_drv ON driver_notes(driver_id, ts);
 CREATE TABLE IF NOT EXISTS geocache(k TEXT PRIMARY KEY, name TEXT);
 """
 
@@ -82,6 +85,9 @@ def init():
         for col, typ in (("odometer", "REAL"), ("odo_key", "TEXT")):
             if col not in cols:
                 c.execute(f"ALTER TABLE devices ADD COLUMN {col} {typ}")
+        dcols = [r["name"] for r in c.execute("PRAGMA table_info(drivers)").fetchall()]
+        if "can_pick_vehicle" not in dcols:
+            c.execute("ALTER TABLE drivers ADD COLUMN can_pick_vehicle INTEGER DEFAULT 0")
 
 
 def claim_orphans(company_id):  # compatibilidade com auth.py (não há dados antigos a reclamar)

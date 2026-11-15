@@ -24,7 +24,7 @@
 {% endblock %}
 {% block scripts %}
 <script>
-const STL = {working:'Trabalho', resting:'Descanso'};
+const STL = {working:'Trabalho', resting:'Descanso', availability:'Disponibilidade', driving:'Condução'};
 const MANAGER = {{ 'true' if manager else 'false' }};
 async function loadAlerts() {
   const r = await api('/x/alerts');

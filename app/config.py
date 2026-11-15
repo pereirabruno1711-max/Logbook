@@ -57,3 +57,9 @@ ODOMETER_DIVISOR = float(env("ODOMETER_DIVISOR", "1"))
 # Qual o odómetro a usar quando a plataforma tem dois: «equipamento» (odómetro enviado pelo tracker/CAN)
 # ou «gps» (distância total acumulada pelo GPS desde a instalação)
 ODOMETER_SOURCE = env("ODOMETER_SOURCE", "equipamento").lower()
+
+# Limites mostrados ao motorista (definidos pela empresa; confirme com a legislação aplicável)
+LIMIT_CONT_WORK_MIN = int(env("LIMIT_CONT_WORK_MIN", "360"))   # horas contínuas em trabalho (6 h)
+LIMIT_DAY_WORK_MIN = int(env("LIMIT_DAY_WORK_MIN", "600"))     # horas trabalhadas por dia (10 h)
+BREAK_MIN = int(env("BREAK_MIN", "30"))                        # pausa mínima que interrompe o trabalho contínuo
+JOURNEY_MAX_HOURS = int(env("JOURNEY_MAX_HOURS", "24"))        # jornada esquecida aberta deixa de contar

@@ -393,3 +393,5 @@ body.imp{--imp:44px}
 .pill.none{background:#f1f5f9;color:var(--mute)}.pill.filling{background:var(--amber-l);color:#b45309}.pill.signed{background:var(--green-l);color:var(--green-d)}
 .kpi.static{cursor:default}
 .linkbox{display:flex;gap:8px}.linkbox input{flex:1;font-size:12.5px}
+
+.tl .a{background:#8b5cf6}.stt.availability i{background:#8b5cf6}.stt.driving i{background:var(--blue)}

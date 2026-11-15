@@ -294,6 +294,7 @@ def _driver_row(d, base):
     last = db.one("SELECT MAX(day) last FROM logbooks WHERE driver_id=? AND status='signed'", d["id"])
     return {"id": d["id"], "name": d["name"], "phone": d["phone"] or "", "licence": d["licence"] or "", "active": bool(d["active"]),
             "link": f"{base}/d/{d['token']}", "state": logbook.current_state(d["id"])["state"],
+            "can_pick_vehicle": bool(d.get("can_pick_vehicle")),
             "device": ({"provider": a["provider"], "device_id": a["device_id"], "name": a["device_name"], "plate": a["plate"],
                         "from": local_str(a["from_ts"], config.LOCAL_TZ, "%d/%m/%Y")} if a else None),
             "signed30": n["n"], "last_signed": last["last"] if last else None,
@@ -337,6 +338,8 @@ def x_driver_update(request: Request, did: int, data: dict = Body(...)):
             db.run(f"UPDATE drivers SET {k}=? WHERE id=?", v, did)
     if "active" in data:
         db.run("UPDATE drivers SET active=? WHERE id=?", 1 if data["active"] else 0, did)
+    if "can_pick_vehicle" in data:
+        db.run("UPDATE drivers SET can_pick_vehicle=? WHERE id=?", 1 if data["can_pick_vehicle"] else 0, did)
     if data.get("new_token"):
         db.run("UPDATE drivers SET token=? WHERE id=?", secrets.token_urlsafe(16), did)
     return {"ok": True}
@@ -455,7 +458,8 @@ def _lb_row(r):
     return {"id": r["id"], "day": r["day"], "driver_id": r["driver_id"], "driver": r["driver_name"], "status": r["status"],
             "signed_at": local_str(r["signed_at"], config.LOCAL_TZ) if r["signed_at"] else "",
             "plate": ((snap or {}).get("vehicle") or {}).get("plate", ""),
-            "driving": sm.get("driving"), "working": sm.get("working"), "resting": sm.get("resting"), "km": sm.get("km"),
+            "driving": sm.get("driving"), "working": sm.get("working"), "availability": sm.get("availability"),
+            "resting": sm.get("resting"), "km": sm.get("km"),
             "pdf": f"/relatorios/{r['id']}.pdf" if r["status"] == "signed" else f"/relatorios/previa/{r['driver_id']}/{r['day']}.pdf"}
 
 
@@ -496,6 +500,15 @@ def logbooks_zip(request: Request):
             z.writestr(f"{_slug(r['driver_name'])}_{r['day']}.pdf", _lb_pdf(r))
     name = f"diarios_{args.get('from', 'inicio')}_{args.get('to', 'fim')}.zip"
     return Response(buf.getvalue(), media_type="application/zip", headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+@app.get("/relatorios/fiscalizacao/{did}.pdf")
+def logbook_inspection(request: Request, did: int, days: int = 7):
+    """Relatório único dos últimos N dias de um motorista, para mostrar numa fiscalização."""
+    c = me(request)
+    d = _own_driver(c["id"], did)
+    return Response(logbook.inspection_pdf(c, d, days), media_type="application/pdf",
+                    headers={"Content-Disposition": f'inline; filename="fiscalizacao_{_slug(d["name"])}.pdf"'})
 
 
 @app.get("/relatorios/previa/{did}/{day}.pdf")
@@ -608,15 +621,55 @@ def driver_logout():
 def d_me(request: Request):
     d, c = _drv(request)
     db.run("UPDATE drivers SET last_seen=? WHERE id=?", now_iso(), d["id"])
-    return {"driver": {"name": d["name"]}, "company": c["name"], "state": logbook.current_state(d["id"]),
-            "today": logbook.today_local().isoformat(), "app": config.APP_NAME,
-            "has_vehicle": bool(db.one("SELECT 1 AS x FROM assignments WHERE driver_id=? AND to_ts IS NULL", d["id"]))}
+    a = db.one("SELECT * FROM assignments WHERE driver_id=? AND to_ts IS NULL ORDER BY from_ts DESC LIMIT 1", d["id"])
+    return {"driver": {"name": d["name"], "phone": d["phone"] or "", "licence": d["licence"] or ""}, "company": c["name"],
+            "state": logbook.current_state(d["id"]), "today": logbook.today_local().isoformat(), "app": config.APP_NAME,
+            "has_vehicle": a is not None, "vehicle": ({"name": a["device_name"], "plate": a["plate"]} if a else None),
+            "can_pick_vehicle": bool(d["can_pick_vehicle"])}
 
 
 @app.post("/d/api/state")
 def d_state(request: Request, data: dict = Body(...)):
     d, _ = _drv(request)
+    if data.get("state") == "driving" and logbook.has_vehicle(d["id"]):
+        raise HTTPException(400, "A condução é detetada automaticamente pelo GPS da viatura.")
     return logbook.set_state(d["id"], data.get("state"))
+
+
+@app.post("/d/api/notes")
+def d_note(request: Request, data: dict = Body(...)):
+    d, c = _drv(request)
+    logbook.add_note(c, d, data.get("text"))
+    return {"ok": True}
+
+
+@app.get("/d/api/vehicles")
+def d_vehicles(request: Request):
+    d, c = _drv(request)
+    if not d["can_pick_vehicle"]:
+        raise HTTPException(403, "O seu gestor não ativou a troca de viatura.")
+    return db.q("SELECT provider, device_id, name, plate FROM devices WHERE company_id=? ORDER BY name COLLATE NOCASE", c["id"])
+
+
+@app.post("/d/api/vehicle")
+def d_vehicle(request: Request, data: dict = Body(...)):
+    """O motorista escolhe a viatura no telemóvel (só se o gestor o permitir): a anterior fecha-se agora."""
+    d, c = _drv(request)
+    if not d["can_pick_vehicle"]:
+        raise HTTPException(403, "O seu gestor não ativou a troca de viatura.")
+    dev = db.one("SELECT * FROM devices WHERE company_id=? AND provider=? AND device_id=?", c["id"], data.get("provider"), str(data.get("device_id")))
+    if not dev:
+        raise HTTPException(400, "Viatura não encontrada.")
+    cur = db.one("SELECT * FROM assignments WHERE driver_id=? AND to_ts IS NULL ORDER BY from_ts DESC LIMIT 1", d["id"])
+    if cur and cur["provider"] == dev["provider"] and cur["device_id"] == dev["device_id"]:
+        return {"ok": True}
+    now = now_iso()
+    if cur:
+        db.run("UPDATE assignments SET to_ts=? WHERE id=?", now, cur["id"])
+    db.run("INSERT INTO assignments(driver_id,provider,device_id,device_name,plate,from_ts) VALUES(?,?,?,?,?,?)",
+           d["id"], dev["provider"], dev["device_id"], dev["name"], dev["plate"], now)
+    logbook.clear_cache()
+    return {"ok": True}
 
 
 @app.get("/d/api/days")
@@ -642,6 +695,13 @@ def d_day_sign(request: Request, day: str, data: dict = Body(...)):
     d, c = _drv(request)
     ip = (request.headers.get("x-forwarded-for") or (request.client.host if request.client else "")).split(",")[0].strip()
     return logbook.sign(c, d, day, data.get("signature"), ip)
+
+
+@app.get("/d/pdf/fiscalizacao")
+def d_inspection(request: Request, days: int = 7):
+    d, c = _drv(request)
+    return Response(logbook.inspection_pdf(c, d, days), media_type="application/pdf",
+                    headers={"Content-Disposition": 'inline; filename="fiscalizacao.pdf"'})
 
 
 @app.get("/d/pdf/{day}")

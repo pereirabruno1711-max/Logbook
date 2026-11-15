@@ -17,8 +17,8 @@
 </div>
 <div class="card flush">
   <table><thead><tr><th style="width:34px"><input type="checkbox" id="selAll" title="Selecionar todos"></th><th>Data</th><th>Motorista</th><th>Viatura</th>
-    <th class="num">Condução</th><th class="num">Trabalho</th><th class="num">Descanso</th><th class="num">Km</th><th>Estado</th><th class="num">PDF</th></tr></thead>
-    <tbody id="rows"><tr><td colspan="10" class="empty">A carregar…</td></tr></tbody></table>
+    <th class="num">Condução</th><th class="num">Trabalho</th><th class="num">Disponib.</th><th class="num">Descanso</th><th class="num">Km</th><th>Estado</th><th class="num">PDF</th></tr></thead>
+    <tbody id="rows"><tr><td colspan="11" class="empty">A carregar…</td></tr></tbody></table>
   <div class="tfoot"><span id="info"></span></div>
 </div>
 {% endblock %}
@@ -33,10 +33,10 @@ function qs() { const p = new URLSearchParams(), d = dsel(); if (d.length) p.set
 async function load() { ROWS = await api('/x/logbooks?' + qs());
   rows.innerHTML = ROWS.length ? ROWS.map(r => `<tr><td><input type="checkbox" class="rchk" value="${r.id}" ${r.status === 'signed' ? '' : 'disabled'}></td>
     <td>${esc(r.day.split('-').reverse().join('/'))}</td><td><b>${esc(r.driver)}</b></td><td>${esc(r.plate) || '—'}</td>
-    <td class="num">${hm(r.driving)}</td><td class="num">${hm(r.working)}</td><td class="num">${hm(r.resting)}</td><td class="num">${r.km == null ? '—' : nf(r.km, 1)}</td>
+    <td class="num">${hm(r.driving)}</td><td class="num">${hm(r.working)}</td><td class="num">${hm(r.availability)}</td><td class="num">${hm(r.resting)}</td><td class="num">${r.km == null ? '—' : nf(r.km, 1)}</td>
     <td><span class="pill ${r.status}">${SL[r.status]}</span>${r.signed_at ? `<div class="small mute">${esc(r.signed_at)}</div>` : ''}</td>
-    <td class="num"><a class="btn sec sm" href="${r.pdf}" target="_blank">${r.status === 'signed' ? 'Abrir' : 'Pré-visualizar'}</a></td></tr>`).join('')
-    : '<tr><td colspan="10" class="empty">Sem relatórios com estes filtros.</td></tr>';
+    <td class="num"><a class="btn sec sm" title="Relatório dos últimos 7 dias do motorista, para fiscalização" href="/relatorios/fiscalizacao/${r.driver_id}.pdf?days=7" target="_blank">Fiscalização</a> <a class="btn sec sm" href="${r.pdf}" target="_blank">${r.status === 'signed' ? 'Abrir' : 'Pré-visualizar'}</a></td></tr>`).join('')
+    : '<tr><td colspan="11" class="empty">Sem relatórios com estes filtros.</td></tr>';
   info.textContent = ROWS.length + ' relatório' + (ROWS.length === 1 ? '' : 's'); selAll.checked = false; upd(); }
 function upd() { const n = document.querySelectorAll('.rchk:checked').length; zipN.textContent = n ? `(${n})` : ''; }
 function zip() { const ids = [...document.querySelectorAll('.rchk:checked')].map(x => x.value), p = qs(); p.set('status', 'signed');
@@ -46,6 +46,6 @@ function lbl() { const n = dsel().length; drvLbl.textContent = n ? n + ' motoris
 document.addEventListener('change', e => { if (e.target.classList.contains('dchk')) { lbl(); load(); } else if (e.target.classList.contains('rchk')) upd(); });
 selAll.onchange = () => { document.querySelectorAll('.rchk:not(:disabled)').forEach(c => c.checked = selAll.checked); upd(); };
 [fFrom, fTo, fSt].forEach(el => el.onchange = load);
-load().catch(e => rows.innerHTML = `<tr><td colspan="10" class="empty">${esc(e.message)}</td></tr>`);
+load().catch(e => rows.innerHTML = `<tr><td colspan="11" class="empty">${esc(e.message)}</td></tr>`);
 </script>
 {% endblock %}
