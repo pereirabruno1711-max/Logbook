@@ -17,6 +17,7 @@ class Point:
     lat: float
     lon: float
     speed: float | None = None
+    odo: float | None = None  # km, se a plataforma o incluir no ponto do histórico
 
 
 @dataclass
@@ -85,14 +86,22 @@ def find_odometer(obj):
     """Procura o odómetro numa resposta da plataforma (campos «odometer», «mileage», «total_distance»,
     ou um sensor do tipo odómetro). Devolve (km, caminho do campo) ou (None, None)."""
     found = []
+    gps_first = config.ODOMETER_SOURCE == "gps"
 
     def walk(o, path):
         if isinstance(o, dict):
+            xml = o.get("other")
+            if isinstance(xml, str) and "<odometer>" in xml or isinstance(xml, str) and "<totaldistance>" in xml:
+                # o servidor Track guarda aqui o que o equipamento envia, em METROS
+                for tag, prio in (("odometer", 0), ("totaldistance", 2)):
+                    m = re.search(rf"<{tag}>([\d.]+)</{tag}>", xml)
+                    if m and float(m.group(1)) > 0:
+                        found.append((prio, float(m.group(1)) / 1000, f"{path}.other.{tag}(m)" if path else f"other.{tag}(m)", True))
             if str(o.get("type", "")).lower() == "odometer":
                 for k in ("value", "val"):
                     n = _num(o.get(k))
                     if n and n > 0:
-                        found.append((0, n, f"{path}.{k}(sensor)"))
+                        found.append((0, n, f"{path}.{k}(sensor)", False))
             for k, v in o.items():
                 if isinstance(v, (dict, list)):
                     walk(v, f"{path}.{k}" if path else k)
@@ -101,7 +110,7 @@ def find_odometer(obj):
                     if rx.search(str(k)):
                         n = _num(v)
                         if n and n > 0:
-                            found.append((prio, n, f"{path}.{k}" if path else k))
+                            found.append((prio, n, f"{path}.{k}" if path else k, False))
                         break
         elif isinstance(o, list):
             for i, x in enumerate(o):
@@ -110,8 +119,10 @@ def find_odometer(obj):
     walk(obj, "")
     if not found:
         return None, None
-    prio, n, key = min(found, key=lambda t: t[0])
-    return round(n / (config.ODOMETER_DIVISOR or 1), 1), key
+    def rank(t):  # «gps»: a distância total acumulada pelo GPS tem prioridade sobre o odómetro do equipamento
+        return (2 - t[0]) if gps_first else t[0]
+    prio, n, key, in_km = min(found, key=rank)
+    return (round(n, 1) if in_km else round(n / (config.ODOMETER_DIVISOR or 1), 1)), key
 
 
 class AuthError(Exception):
@@ -159,6 +170,8 @@ class GPSWox:
         out = {}
         for d in _walk(data):
             if "id" in d and "name" in d and ("device_data" in d or "imei" in d or "lat" in d):
+                if str(d["id"]) in out:
+                    continue  # o «device_data» aninhado repete id/nome/imei, mas não tem posição nem distância
                 dd = d.get("device_data") or {}
                 plate = guess_plate(dd.get("plate_number"), dd.get("registration_number"),
                                     d.get("plate_number"), d.get("name"), dd.get("object_owner"))
@@ -195,7 +208,7 @@ class GPSWox:
                     if lat == 0 and lon == 0:
                         continue
                     ts = self._parse_time(p)
-                    pts[ts] = Point(ts, lat, lon, _f(p.get("speed")))
+                    pts[ts] = Point(ts, lat, lon, _f(p.get("speed")), find_odometer(p)[0])
                 except (ValueError, TypeError):
                     continue
         return sorted(pts.values(), key=lambda x: x.ts)
@@ -219,6 +232,26 @@ class TrustTrack:
         r.raise_for_status()
         return r.json()
 
+    def _latest(self, device_id):
+        """Coordenada mais recente do objeto (últimas 24 h), ou None."""
+        end = datetime.now(timezone.utc)
+        try:
+            data = self._get(f"objects/{device_id}/coordinates",
+                             fromDatetime=(end - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+                             toDatetime=end.strftime("%Y-%m-%dT%H:%M:%S.000Z"), limit=1000)
+        except Exception:  # noqa
+            return None
+        items = data.get("items", []) if isinstance(data, dict) else data
+        best = None
+        for it in items:
+            try:
+                ts = dtparser.isoparse(it.get("datetime") or it.get("gnss_time") or it["time"])
+            except (KeyError, ValueError, TypeError):
+                continue
+            if best is None or ts > best[0]:
+                best = (ts, it)
+        return best[1] if best else None
+
     def devices(self):
         data = self._get("objects")
         items = data if isinstance(data, list) else data.get("items", data.get("objects", []))
@@ -229,14 +262,28 @@ class TrustTrack:
             lc = o.get("last_coordinate") or {}
             t = lc.get("datetime")
             odo, key = find_odometer(o)
+            lat, lon = _f(lc.get("latitude")), _f(lc.get("longitude"))
+            if not lc or odo is None:  # a lista de objetos não traz posição nem odómetro: ver a coordenada mais recente
+                last = self._latest(o.get("id"))
+                if last:
+                    pos = last.get("position") or last
+                    if not lc:
+                        t = last.get("datetime") or last.get("gnss_time") or last.get("time")
+                        lat, lon = _f(pos.get("latitude")), _f(pos.get("longitude"))
+                    if odo is None:
+                        odo, key = find_odometer(last)
+                        key = f"coordenadas.{key}" if key else None
             out.append(Device(self.name, str(o.get("id")), o.get("name") or str(o.get("id")), plate,
-                              None, t, _f(lc.get("latitude")), _f(lc.get("longitude")), odo, key))
+                              None, t, lat, lon, odo, key))
         return out
 
     def raw(self, device_id):
         data = self._get("objects")
         items = data if isinstance(data, list) else data.get("items", data.get("objects", []))
-        return next((o for o in items if str(o.get("id")) == str(device_id)), None)
+        o = next((o for o in items if str(o.get("id")) == str(device_id)), None)
+        if o is not None:  # junta a coordenada mais recente, onde costuma vir a quilometragem
+            o = dict(o, _ultima_coordenada=self._latest(device_id))
+        return o
 
     def history(self, device_id, start, end):
         pts, token = {}, None
@@ -255,7 +302,7 @@ class TrustTrack:
                     ts = (ts.replace(tzinfo=timezone.utc) if ts.tzinfo is None else ts).astimezone(timezone.utc)
                     if lat == 0 and lon == 0:
                         continue
-                    pts[ts] = Point(ts, lat, lon, _f(pos.get("speed")))
+                    pts[ts] = Point(ts, lat, lon, _f(pos.get("speed")), find_odometer(it)[0])
                 except (KeyError, ValueError, TypeError):
                     continue
             token = data.get("continuation_token") if isinstance(data, dict) else None

@@ -361,6 +361,8 @@ def compute_day(company, driver, day, data=None, now=None):
         if r1:
             vehicle["odo_end_hint"] = str(round(r1["km"]))
             vehicle["odo_src"] = "gps"
+        if not (r0 and r1):
+            _odo_from_history(company, b, per_asg.get(b["id"], []), s, e, summary["km"], vehicle)
     vehicle["km_gps"] = summary["km"]             # a app soma isto ao inicial para sugerir o final
 
     bar = "".join({"driving": "d", "working": "w", "resting": "r", "future": "-"}[x] for x in states)
@@ -368,6 +370,30 @@ def compute_day(company, driver, day, data=None, now=None):
             "past": e <= now, "gps_ok": gps_error is None, "gps_error": gps_error, "has_vehicle": bool(asg),
             "bar": bar, "period_min": config.PERIOD_MIN, "segments": segments, "summary": summary, "trips": out_trips,
             "vehicle": vehicle, "edits": edits}
+
+
+def _odo_from_history(company, a, pts, s, e, day_km, vehicle):
+    """Dias passados sem leitura noturna: (1) odómetro que a plataforma põe nos pontos do histórico; senão
+    (2) estimativa para trás = odómetro atual do objeto - distância GPS percorrida desde o fim desse dia."""
+    with_odo = [p for p in pts if p.odo]
+    if with_odo and not vehicle["odo_start_hint"] or with_odo and vehicle["odo_src"] != "gps":
+        vehicle["odo_start_hint"], vehicle["odo_end_hint"] = str(round(with_odo[0].odo)), str(round(with_odo[-1].odo))
+        vehicle["odo_src"] = "gps"
+        return
+    now = datetime.now(UTC)
+    if e > now or now - e > timedelta(days=config.DAYS_BACK):
+        return
+    dev = db.one("SELECT odometer FROM devices WHERE company_id=? AND provider=? AND device_id=?",
+                 company["id"], a["provider"], a["device_id"])
+    if not dev or not dev["odometer"]:
+        return
+    try:
+        later = fetch_points(company, a["provider"], a["device_id"], e, now)
+    except GpsError:
+        return
+    end = dev["odometer"] - _path_km(later)
+    vehicle["odo_end_hint"], vehicle["odo_start_hint"] = str(round(end)), str(round(end - day_km))
+    vehicle["odo_src"] = "estimate"
 
 
 # ---------- fluxo do relatório ----------

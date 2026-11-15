@@ -127,3 +127,51 @@ def test_find_odometer_and_snapshots():
         logbook.fetch_points = lambda *a, **k: []
         v = logbook.compute_day(db.one("SELECT * FROM companies WHERE id=?", cid), db.one("SELECT * FROM drivers WHERE id=?", did), day)["vehicle"]
         assert (v["odo_start_hint"], v["odo_end_hint"], v["odo_src"]) == ("80000", "80121", "gps")
+
+
+def test_gpswox_devices_keeps_top_level_item():
+    """Regressão: o «device_data» aninhado não pode substituir o objeto (perdia posição e distância)."""
+    from app import config
+    from app.providers import GPSWox, find_odometer
+    item = {"id": 151, "name": "Berlingo 23-MB-22", "online": "ack", "timestamp": 1794763436, "lat": 41.49, "lng": -8.51,
+            "total_distance": 15872.54,
+            "device_data": {"id": 151, "name": "Berlingo 23-MB-22", "imei": "1", "plate_number": "23-MB-22",
+                            "traccar": {"id": 151, "other": "<info><odometer>39923801</odometer><totaldistance>15872540.46</totaldistance></info>"}}}
+    g = GPSWox("x" * 20)
+    g._get = lambda path, **kw: [{"items": [item]}]
+    d = g.devices()[0]
+    assert d.last_time and d.lat == 41.49
+    assert d.odometer == 39923.8 and "odometer" in d.odo_key       # odómetro do equipamento (metros -> km)
+    config.ODOMETER_SOURCE = "gps"
+    try:
+        assert find_odometer(item)[0] == 15872.5                    # distância total acumulada pelo GPS
+    finally:
+        config.ODOMETER_SOURCE = "equipamento"
+
+
+def test_odometer_backfill_for_past_days():
+    from datetime import datetime, timezone
+    from app.providers import Point
+    with TestClient(app):
+        cid = auth.create_company("Empresa Retro")
+        did = db.run("INSERT INTO drivers(company_id,name,token,created_at) VALUES(?,?,?,?)", cid, "Rui", "tokretro", "2026-01-01T00:00:00+00:00")
+        day = (logbook.today_local() - timedelta(days=3)).isoformat()
+        s, e = logbook.day_bounds(day)
+        db.run("INSERT INTO assignments(driver_id,provider,device_id,device_name,plate,from_ts) VALUES(?,?,?,?,?,?)",
+               did, "gpswox", "8", "Van", "AA00AA", (s - timedelta(days=9)).isoformat())
+        db.run("INSERT INTO devices(company_id,provider,device_id,name,odometer) VALUES(?,?,?,?,?)", cid, "gpswox", "8", "Van", 50000.0)
+
+        def drive(start, n=60, odo=None):  # n minutos a 60 km/h para norte
+            return [Point(start + timedelta(minutes=i), 41 + i * 0.009, -8.0, 60.0, odo(i) if odo else None) for i in range(n)]
+        co, dr = db.one("SELECT * FROM companies WHERE id=?", cid), db.one("SELECT * FROM drivers WHERE id=?", did)
+
+        # 1) estimativa: o dia tem 1 h de condução e depois houve mais 1 h (até agora)
+        logbook.fetch_points = lambda c, p, d, a, b: drive(s + timedelta(hours=8)) if a == s else drive(e + timedelta(hours=1))
+        v = logbook.compute_day(co, dr, day)["vehicle"]
+        assert v["odo_src"] == "estimate"
+        assert int(v["odo_end_hint"]) < 50000 and int(v["odo_start_hint"]) < int(v["odo_end_hint"])
+
+        # 2) a plataforma já traz o odómetro nos pontos: tem prioridade sobre a estimativa
+        logbook.fetch_points = lambda c, p, d, a, b: drive(s + timedelta(hours=8), odo=lambda i: 40000 + i) if a == s else []
+        v = logbook.compute_day(co, dr, day)["vehicle"]
+        assert (v["odo_src"], v["odo_start_hint"], v["odo_end_hint"]) == ("gps", "40000", "40059")

@@ -13,7 +13,9 @@ Digitaliza e automatiza o diário de bordo dos motoristas (solução «Logbook»
 Todas as noites (às `NIGHTLY_HOUR`, por omissão 3h) a app calcula os últimos `NIGHTLY_DAYS` dias de cada motorista ativo e gera alertas no Painel: dia com condução por assinar (há 2+ dias), condução acima de 9 h, sem dados GPS, objeto sem posição há 48 h, «Trabalho» ligado há 14 h e motorista sem objeto. O gestor pode **Verificar agora** ou **Ignorar** um alerta.
 
 ## Odómetro da plataforma GPS
-Ao sincronizar, a app procura em cada objeto um campo de odómetro (`odometer`, `mileage`, `total_distance` ou um sensor de odómetro) e mostra-o em *Objetos GPS*. Se vier em metros, defina `ODOMETER_DIVISOR=1000`. Todas as noites a leitura é guardada, e o relatório do dia usa a leitura desse dia como inicial e a do dia seguinte como final (só há leitura para dias a partir da primeira noite em que a app correu). O botão **Dados** mostra a resposta em bruto do objeto, para confirmar o campo certo.
+Ao sincronizar, a app procura em cada objeto um campo de odómetro (`odometer`, `mileage`, `total_distance` ou um sensor de odómetro) e mostra-o em *Objetos GPS*. Se vier em metros, defina `ODOMETER_DIVISOR=1000`. No Track lê o odómetro enviado pelo equipamento (campo `odometer` do `traccar.other`, em metros); com `ODOMETER_SOURCE=gps` usa antes a distância total acumulada pelo GPS (`total_distance`). Todas as noites a leitura é guardada, e o relatório do dia usa a leitura desse dia como inicial e a do dia seguinte como final (só há leitura para dias a partir da primeira noite em que a app correu). Para dias **anteriores** à primeira leitura noturna, a app usa o odómetro que a plataforma inclua nos pontos do histórico; se não incluir, estima-o para trás (odómetro atual menos a distância GPS percorrida desde esse dia, até 31 dias) e assinala-o como estimado.
+
+O botão **Dados** mostra a resposta em bruto do objeto, para confirmar o campo certo.
 
 ## Quilómetros
 A distância por viagem e por dia é medida pelo GPS. O conta-quilómetros: o inicial vem do último relatório assinado do motorista e o final é sugerido (inicial + distância GPS); o motorista confirma com o painel da viatura.

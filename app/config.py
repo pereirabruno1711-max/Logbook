@@ -54,3 +54,6 @@ OFFLINE_ALERT_HOURS = int(env("OFFLINE_ALERT_HOURS", "48"))  # objeto sem posiç
 
 # Odómetro lido da plataforma GPS: 1 se vem em km, 1000 se vem em metros
 ODOMETER_DIVISOR = float(env("ODOMETER_DIVISOR", "1"))
+# Qual o odómetro a usar quando a plataforma tem dois: «equipamento» (odómetro enviado pelo tracker/CAN)
+# ou «gps» (distância total acumulada pelo GPS desde a instalação)
+ODOMETER_SOURCE = env("ODOMETER_SOURCE", "equipamento").lower()
