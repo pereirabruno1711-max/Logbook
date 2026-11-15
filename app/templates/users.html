@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="phead"><div class="t"><h1>{{ I.users|safe }} Utilizadores</h1><p>As contas são criadas aqui, com uma palavra-passe automática que a pessoa troca na primeira entrada</p></div>
+  <div class="act"><button class="btn" onclick="openNew()">{{ I.plus|safe }} Novo utilizador</button></div></div>
+<div class="card flush">
+  <table><thead><tr><th>Utilizador</th><th>Empresas</th><th style="white-space:nowrap">Palavra-passe</th><th>Último acesso</th><th>Tipo de conta</th><th></th></tr></thead><tbody>
+  {% for u in users %}{% set lv = (u.is_admin or 0)|int %}
+  <tr><td><b>{{ u.email }}</b>{% if u.name and u.name != u.email %}<div class="small mute">{{ u.name }}</div>{% endif %}</td>
+    <td class="small">{% if u.empresas %}{{ u.empresas }}{% elif lv < 2 %}<span class="pill st-err" title="Sem empresa a pessoa não consegue entrar. Adicione-a em Empresas → Utilizadores.">Sem empresa</span>{% else %}—{% endif %}</td>
+    <td>{% if not u.has_pw %}<span class="pill st-warn" title="Conta antiga: entra uma última vez com a conta GPS e define a palavra-passe">Por definir</span>
+      {% elif u.must_change %}<span class="pill st-warn" title="Tem de a trocar na próxima entrada">Temporária</span>
+      {% else %}<span class="pill st-ok">Definida</span>{% endif %}</td>
+    <td>{{ u.last_login|lt if u.last_login else '—' }}</td>
+    <td>{% if u.id == user.id %}<span class="pill st-ok">{{ level_name }} (você)</span>
+    {% elif lv >= 2 and not is_super %}<span class="pill st-ok">Superadministrador</span>
+    {% else %}<div class="sel" style="display:inline-block"><select style="padding:5px 30px 5px 10px" data-prev="{{ lv }}" onchange="setLevel({{u.id}}, this)">
+        <option value="0" {% if lv == 0 %}selected{% endif %}>Utilizador</option>
+        <option value="1" {% if lv == 1 %}selected{% endif %}>Administrador</option>
+        {% if is_super %}<option value="2" {% if lv >= 2 %}selected{% endif %}>Superadministrador</option>{% endif %}
+      </select></div>{% endif %}</td>
+    <td class="num">{% if u.id != user.id and (is_super or lv < 2) %}<button class="btn sec sm" onclick="openReset({{ u.id }}, '{{ u.email|e }}')">{{ I.key|safe }} Redefinir</button>{% endif %}</td></tr>
+  {% endfor %}</tbody></table>
+</div>
+<div class="banner info">{{ I.info|safe }}<span><b>Superadministrador</b>: acesso a tudo, incluindo entrar em qualquer empresa (personificação).
+<b>Administrador</b>: acesso a tudo — todas as empresas e utilizadores — exceto personificação: só entra nas empresas de que é membro.
+<b>Utilizador</b>: apenas as suas empresas, com o papel definido em cada uma (gestor ou utilizador).
+Só um superadministrador pode atribuir ou retirar o acesso de superadministrador.</span></div>
+
+<div class="modal hidden" id="mNew" onclick="if(event.target===this)this.classList.add('hidden')">
+  <div class="box">
+    <h2>Novo utilizador</h2>
+    <p class="mute small" style="margin:0 0 14px">É gerada uma palavra-passe automática, que a pessoa tem de trocar na primeira entrada. A pessoa só entra nas empresas a que tem acesso (mais empresas adicionam-se em <b>Empresas → Utilizadores</b>).</p>
+    <div class="field"><label>Email</label><input id="nEmail" type="email" autocomplete="off"></div>
+    <div class="field"><label>Nome (opcional)</label><input id="nName" autocomplete="off"></div>
+    <div class="field"><label>Tipo de conta</label><div class="sel"><select id="nLevel"><option value="0">Utilizador</option><option value="1">Administrador</option>{% if is_super %}<option value="2">Superadministrador</option>{% endif %}</select></div></div>
+    <div class="row" style="gap:10px;align-items:flex-end">
+      <div class="field" style="flex:2"><label>Empresa</label><div class="sel"><select id="nComp"><option value="">— escolha —</option>{% for c in all_companies %}<option value="{{ c.id }}">{{ c.name }}</option>{% endfor %}</select></div></div>
+      <div class="field" style="flex:1"><label>Papel</label><div class="sel"><select id="nRole"><option value="utilizador">Utilizador</option><option value="gestor">Gestor</option></select></div></div>
+    </div>
+    <div class="row" style="justify-content:flex-end"><button class="btn sec" onclick="mNew.classList.add('hidden')">Cancelar</button><button class="btn" onclick="doNew()">Criar conta</button></div>
+  </div>
+</div>
+
+<div class="modal hidden" id="mReset" onclick="if(event.target===this)this.classList.add('hidden')">
+  <div class="box">
+    <h2>Redefinir palavra-passe</h2>
+    <p class="mute small" style="margin:0 0 14px">É gerada uma palavra-passe automática nova para <b id="rEmail"></b>. A atual deixa de funcionar e as sessões abertas desta pessoa são terminadas.</p>
+    <label class="chk"><input type="checkbox" id="rForce" checked> Obrigar a trocar a palavra-passe na próxima entrada</label>
+    <div class="row" style="justify-content:flex-end;margin-top:16px"><button class="btn sec" onclick="mReset.classList.add('hidden')">Cancelar</button><button class="btn" onclick="doReset()">Redefinir</button></div>
+  </div>
+</div>
+
+<div class="modal hidden" id="mPw">
+  <div class="box">
+    <h2 id="pwTitle">Palavra-passe</h2>
+    <p class="mute small" style="margin:0 0 12px">Envie estes dados à pessoa. <b>Esta palavra-passe não volta a ser mostrada.</b></p>
+    <div class="pwbox"><div><span class="small mute">Email</span><b id="pwEmail"></b></div><div><span class="small mute">Palavra-passe</span><code id="pwVal"></code></div></div>
+    <p class="small" id="pwNote" style="margin:10px 0 0"></p>
+    <div class="row" style="justify-content:flex-end;margin-top:16px"><button class="btn sec" onclick="copyPw()" id="pwCopy">Copiar</button><button class="btn" onclick="location.reload()">Fechar</button></div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}<script>
+async function setLevel(id, sel){
+  try { await api('/x/users/'+id+'/admin',{method:'POST', json:{level: +sel.value}}); sel.dataset.prev = sel.value; }
+  catch(e){ alert(e.message); sel.value = sel.dataset.prev; }
+}
+function openNew(){ nEmail.value = nName.value = ''; nLevel.value = '0'; nComp.value = nComp.options.length === 2 ? nComp.options[1].value : ''; nRole.value = 'utilizador'; mNew.classList.remove('hidden'); nEmail.focus(); }
+async function doNew(){
+  try {
+    const r = await api('/x/users', {method:'POST', json:{email:nEmail.value, name:nName.value, level:+nLevel.value, company_id:+nComp.value || null, role:nRole.value}});
+    mNew.classList.add('hidden');
+    showPw('Conta criada', r.email, r.password, 'A pessoa tem de trocar a palavra-passe na primeira entrada.');
+  } catch(e){ alert(e.message); }
+}
+let RID = null;
+function openReset(id, email){ RID = id; rEmail.textContent = email; rForce.checked = true; mReset.classList.remove('hidden'); }
+async function doReset(){
+  try {
+    const r = await api('/x/users/'+RID+'/password', {method:'POST', json:{must_change: rForce.checked}});
+    mReset.classList.add('hidden');
+    showPw('Palavra-passe redefinida', r.email, r.password, r.must_change ? 'A pessoa tem de a trocar na próxima entrada.' : 'A pessoa pode continuar a usar esta palavra-passe (não é obrigada a trocá-la).');
+  } catch(e){ alert(e.message); }
+}
+function showPw(title, email, pw, note){ pwTitle.textContent = title; pwEmail.textContent = email; pwVal.textContent = pw; pwNote.textContent = note; pwCopy.textContent = 'Copiar'; mPw.classList.remove('hidden'); }
+async function copyPw(){
+  const t = 'Endereço: ' + location.origin + '\nEmail: ' + pwEmail.textContent + '\nPalavra-passe: ' + pwVal.textContent;
+  try { await navigator.clipboard.writeText(t); pwCopy.textContent = 'Copiado ✓'; } catch(e){ pwCopy.textContent = 'Selecione e copie'; }
+}
+</script>{% endblock %}

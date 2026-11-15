@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="phead">
+  <div class="t"><h1>{{ I.car|safe }} Objetos GPS</h1><p>Equipamentos lidos das plataformas GPS da empresa. Cada motorista usa um para o diário.</p></div>
+  <div class="act">{% if manager %}<button class="btn" id="syncBtn" onclick="sync()">{{ I.sync|safe }} Sincronizar</button>{% endif %}</div>
+</div>
+<div id="msg"></div>
+<div class="toolbar"><div class="search">{{ I.search|safe }}<input id="q" placeholder="Pesquisar objeto ou matrícula…"></div></div>
+<div class="card flush">
+  <table><thead><tr><th>Objeto</th><th>Matrícula</th><th>Plataforma</th><th>Motorista atribuído</th><th>Última posição</th></tr></thead>
+    <tbody id="rows"><tr><td colspan="5" class="empty">A carregar…</td></tr></tbody></table>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+let ALL = [];
+const PL = {gpswox: ['Track', 'gpswox'], trusttrack: ['Trust Track', 'trusttrack']};
+function draw() { const q = document.getElementById('q').value.trim().toLowerCase();
+  const l = ALL.filter(d => !q || (d.name + ' ' + (d.plate || '')).toLowerCase().includes(q));
+  rows.innerHTML = l.length ? l.map(d => `<tr><td><b>${esc(d.name)}</b></td><td>${esc(d.plate) || '—'}</td>
+    <td><span class="tag ${(PL[d.provider] || [0, 'none'])[1]}">${(PL[d.provider] || [d.provider])[0]}</span></td>
+    <td>${d.drivers ? esc(d.drivers) : '<span class="mute">—</span>'}</td><td class="small">${esc(d.last_time) || '—'}</td></tr>`).join('')
+    : `<tr><td colspan="5" class="empty">${ALL.length ? 'Nada encontrado.' : 'Sem objetos. Ligue uma plataforma GPS em «Empresas» e sincronize.'}</td></tr>`; }
+async function load() { const r = await api('/x/devices'); ALL = r.devices; draw(); }
+async function sync() { syncBtn.disabled = true; try { const r = await api('/x/devices/sync', {method: 'POST'});
+  msg.innerHTML = `<div class="banner info" style="margin-bottom:14px">${esc(r.report.join(' · '))}</div>`; await load(); } catch (e) { alert(e.message); } syncBtn.disabled = false; }
+document.getElementById('q').addEventListener('input', draw);
+load().catch(e => rows.innerHTML = `<tr><td colspan="5" class="empty">${esc(e.message)}</td></tr>`);
+</script>
+{% endblock %}

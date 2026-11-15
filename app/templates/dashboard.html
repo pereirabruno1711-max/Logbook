@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="phead">
+  <div class="t"><h1>Painel</h1><p>Relatórios diários dos motoristas de {{ company.name }}</p></div>
+  <div class="act"><a class="btn sec" href="/relatorios">{{ I.report|safe }} Relatórios</a>{% if manager %}<a class="btn" href="/motoristas">{{ I.plus|safe }} Novo motorista</a>{% endif %}</div>
+</div>
+<div class="grid g4" style="margin-bottom:18px">
+  <a class="kpi" href="/motoristas"><div class="ic blue">{{ I.users|safe }}</div><div class="lb">Motoristas ativos</div><div class="v" id="kDrv">–</div><div class="d flat">&nbsp;</div></a>
+  <a class="kpi" href="/motoristas"><div class="ic orange">{{ I.play|safe }}</div><div class="lb">Em trabalho agora</div><div class="v" id="kWork">–</div><div class="d flat">&nbsp;</div></a>
+  <a class="kpi" href="/relatorios"><div class="ic green">{{ I.check|safe }}</div><div class="lb">Assinados (30 dias)</div><div class="v" id="kSig">–</div><div class="d flat">&nbsp;</div></a>
+  <a class="kpi" href="/relatorios"><div class="ic orange">{{ I.warn|safe }}</div><div class="lb">Dias por assinar (7 dias)</div><div class="v" id="kPend">–</div><div class="d flat">&nbsp;</div></a>
+</div>
+<div class="card flush">
+  <div class="row between" style="padding:16px 20px 0"><h3 style="margin:0">Motoristas com relatórios em falta</h3></div>
+  <table><thead><tr><th>Motorista</th><th>Objeto GPS</th><th>Estado agora</th><th class="num">Dias por assinar</th><th>Último assinado</th></tr></thead>
+    <tbody id="rows"><tr><td colspan="5" class="empty">A carregar…</td></tr></tbody></table>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const STL = {working:'Trabalho', resting:'Descanso'};
+(async () => {
+  const d = await api('/x/drivers'), act = d.filter(x => x.active);
+  kDrv.textContent = act.length; kWork.textContent = act.filter(x => x.state === 'working').length;
+  kSig.textContent = nf(act.reduce((a, x) => a + x.signed30, 0)); kPend.textContent = nf(act.reduce((a, x) => a + x.pending, 0));
+  const miss = act.filter(x => x.pending > 0).sort((a, b) => b.pending - a.pending);
+  rows.innerHTML = miss.length ? miss.map(x => `<tr><td><b>${esc(x.name)}</b></td><td>${x.device ? esc(x.device.name) : '<span class="tag none">sem objeto</span>'}</td>
+    <td><span class="stt ${x.state}"><i></i>${STL[x.state]}</span></td><td class="num"><b style="color:var(--red)">${x.pending}</b></td><td>${x.last_signed ? esc(x.last_signed.split('-').reverse().join('/')) : '—'}</td></tr>`).join('')
+    : '<tr><td colspan="5" class="empty">Todos os motoristas têm os relatórios dos últimos 7 dias assinados.</td></tr>';
+})().catch(e => rows.innerHTML = `<tr><td colspan="5" class="empty">${esc(e.message)}</td></tr>`);
+</script>
+{% endblock %}

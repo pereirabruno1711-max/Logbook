@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="phead"><div class="t"><h1>{{ I.cog|safe }} Configurações</h1><p>A sua conta e a empresa ativa</p></div></div>
+<div style="max-width:900px">
+  <div class="card">
+    <h2>A minha conta</h2>
+    <div class="row"><div class="av" style="width:44px;height:44px">{{ initials }}</div><div><b>{{ user.email }}</b><div class="small mute">{{ level_name + ' da plataforma' if user.is_admin else ('Gestor' if manager else 'Utilizador') }}</div></div></div>
+    <p class="mute small" style="margin-bottom:0">Entra com a mesma conta da plataforma de localização. Tem acesso a {{ companies|length }} empresa{{ 's' if companies|length != 1 }}; mude de empresa no topo da página.</p>
+  </div>
+  <div class="card">
+    <h2>Empresa ativa</h2>
+    <div class="row between"><div><b>{{ company.name }}</b>{% if company.nif %}<div class="small mute">NIF {{ company.nif }}</div>{% endif %}</div>
+      <a class="btn sec" href="/empresas?id={{ company.id }}">{{ 'Gerir empresa' if manager else 'Ver empresa' }}</a></div>
+    <div class="row" style="margin-top:12px">{% if company.gpswox_hash %}<span class="tag gpswox">Track ligada</span>{% else %}<span class="tag none">GPS por ligar</span>{% endif %}
+      {% if company.trusttrack_key %}<span class="tag trusttrack">Trust Track</span>{% endif %}</div>
+    <p class="mute small" style="margin-bottom:0">Plataformas GPS, utilizadores e a chave da API de relatórios gerem-se na página da empresa.</p>
+  </div>
+</div>
+{% endblock %}

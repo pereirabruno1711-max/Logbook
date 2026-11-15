@@ -1,0 +1,13 @@
+services:
+  diario:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATA_DIR: /data
+    volumes:
+      - diario-data:/data
+    expose:
+      - "8000"
+volumes:
+  diario-data:

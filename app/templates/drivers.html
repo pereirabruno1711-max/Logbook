@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="phead">
+  <div class="t"><h1>{{ I.users|safe }} Motoristas</h1><p>Cada motorista recebe um link pessoal para a app e tem um objeto GPS atribuído, que deteta a condução</p></div>
+  <div class="act">{% if manager %}<button class="btn" onclick="openDrv()">{{ I.plus|safe }} Novo motorista</button>{% endif %}</div>
+</div>
+<div id="msg"></div>
+<div class="card flush">
+  <table><thead><tr><th>Motorista</th><th>Objeto GPS</th><th>Estado agora</th><th class="num">Assinados (30 d)</th><th class="num">Por assinar (7 d)</th><th>Último acesso</th><th class="num">Ações</th></tr></thead>
+    <tbody id="rows"><tr><td colspan="7" class="empty">A carregar…</td></tr></tbody></table>
+</div>
+
+<div class="modal hidden" id="drvModal" onclick="if(event.target===this)closeDrv()">
+  <div class="box">
+    <h2 id="dmTitle">Novo motorista</h2>
+    <div class="grid" style="gap:12px;margin-top:12px">
+      <label><div class="small" style="font-weight:600;margin-bottom:4px">Nome</div><input id="dmName" style="width:100%"></label>
+      <label><div class="small" style="font-weight:600;margin-bottom:4px">Telemóvel (opcional)</div><input id="dmPhone" style="width:100%"></label>
+      <label><div class="small" style="font-weight:600;margin-bottom:4px">N.º da carta de condução (opcional)</div><input id="dmLic" style="width:100%"></label>
+    </div>
+    <div class="row" style="justify-content:flex-end;margin-top:18px"><button class="btn sec" onclick="closeDrv()">Cancelar</button><button class="btn" onclick="saveDrv()">Guardar</button></div>
+  </div>
+</div>
+
+<div class="modal hidden" id="asModal" onclick="if(event.target===this)closeAs()">
+  <div class="box">
+    <h2>Objeto GPS de <span id="asName"></span></h2>
+    <p class="mute small" style="margin:0 0 14px">A condução do motorista é detetada por este objeto (velocidade acima de 1 km/h). O histórico de atribuições é conservado.</p>
+    <div class="grid" style="gap:12px">
+      <label><div class="small" style="font-weight:600;margin-bottom:4px">Objeto</div><div class="sel"><select id="asDev" style="width:100%"></select></div></label>
+      <label><div class="small" style="font-weight:600;margin-bottom:4px">Válido desde (opcional)</div><input id="asFrom" type="date" style="width:100%"><div class="small mute" style="margin-top:3px">Em branco: a partir de agora (ou dos últimos dias, na primeira atribuição).</div></label>
+    </div>
+    <div class="row between" style="margin-top:18px"><button class="btn sec" id="asClear" onclick="clearAs()">Retirar objeto</button><span class="row"><button class="btn sec" onclick="closeAs()">Cancelar</button><button class="btn" onclick="saveAs()">Guardar</button></span></div>
+  </div>
+</div>
+
+<div class="modal hidden" id="lkModal" onclick="if(event.target===this)closeLk()">
+  <div class="box">
+    <h2>Link da app — <span id="lkName"></span></h2>
+    <p class="mute small" style="margin:0 0 12px">Envie este link ao motorista. Ao abri-lo no telemóvel, fica com a sessão guardada (pode «Adicionar ao ecrã principal»). É pessoal: quem o tiver acede ao diário deste motorista.</p>
+    <div class="linkbox"><input id="lkUrl" readonly onclick="this.select()"><button class="btn sec" onclick="copyLk()">Copiar</button></div>
+    <div class="row" style="margin-top:14px"><a class="btn sec sm" id="lkWa" target="_blank">Enviar por WhatsApp</a><a class="btn sec sm" id="lkSms">Enviar por SMS</a>
+      {% if manager %}<button class="btn danger sm" onclick="newTok()">Gerar link novo (invalida o atual)</button>{% endif %}</div>
+    <div class="row" style="justify-content:flex-end;margin-top:14px"><button class="btn" onclick="closeLk()">Fechar</button></div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const MANAGER = {{ 'true' if manager else 'false' }};
+let DRV = [], DEV = [], editId = null, asId = null, lkId = null;
+const STL = {working:'Trabalho', resting:'Descanso'};
+const fd = d => d ? d.split('-').reverse().join('/') : '—';
+async function load() {
+  [DRV, DEV] = await Promise.all([api('/x/drivers'), api('/x/devices').then(r => r.devices)]);
+  rows.innerHTML = DRV.length ? DRV.map(d => `<tr style="${d.active ? '' : 'opacity:.55'}">
+    <td><b>${esc(d.name)}</b>${d.active ? '' : ' <span class="tag none">inativo</span>'}<div class="small mute">${esc(d.phone)}${d.phone && d.licence ? ' · ' : ''}${d.licence ? 'carta ' + esc(d.licence) : ''}</div></td>
+    <td>${d.device ? `<b>${esc(d.device.name)}</b><div class="small mute">${d.device.plate ? esc(d.device.plate) + ' · ' : ''}desde ${esc(d.device.from)}</div>` : '<span class="tag none">sem objeto</span>'}</td>
+    <td><span class="stt ${d.state}"><i></i>${STL[d.state]}</span></td><td class="num">${d.signed30}</td>
+    <td class="num">${d.pending ? `<b style="color:var(--red)">${d.pending}</b>` : '0'}</td><td class="small">${esc(d.last_seen) || '—'}</td>
+    <td class="num"><button class="btn sec sm" onclick="openLk(${d.id})">Link</button>
+      ${MANAGER ? `<button class="btn sec sm" onclick="openAs(${d.id})">Objeto</button><button class="btn sec sm" onclick="openDrv(${d.id})">Editar</button>` : ''}</td></tr>`).join('')
+    : '<tr><td colspan="7" class="empty">Ainda não há motoristas. Crie o primeiro em «Novo motorista».</td></tr>';
+}
+const show = (m, ok) => msg.innerHTML = m ? `<div class="banner ${ok ? 'info' : 'warn'}" style="margin-bottom:14px">${esc(m)}</div>` : '';
+function openDrv(id) { editId = id || null; const d = DRV.find(x => x.id === id) || {};
+  dmTitle.textContent = id ? 'Editar motorista' : 'Novo motorista'; dmName.value = d.name || ''; dmPhone.value = d.phone || ''; dmLic.value = d.licence || '';
+  drvModal.classList.remove('hidden'); setTimeout(() => dmName.focus(), 50); drvModal.dataset.active = id ? (d.active ? 1 : 0) : 1; }
+const closeDrv = () => drvModal.classList.add('hidden');
+async function saveDrv() { try { const body = {name: dmName.value, phone: dmPhone.value, licence: dmLic.value};
+  if (editId) await api('/x/drivers/' + editId, {method:'POST', json: body}); else await api('/x/drivers', {method:'POST', json: body});
+  closeDrv(); await load(); if (!editId) { const d = DRV.find(x => x.name === body.name.trim()); if (d) openLk(d.id); } } catch (e) { alert(e.message); } }
+function openAs(id) { asId = id; const d = DRV.find(x => x.id === id); asName.textContent = d.name;
+  asDev.innerHTML = DEV.map(v => `<option value="${esc(v.provider)}|${esc(v.device_id)}" ${d.device && d.device.device_id === v.device_id && d.device.provider === v.provider ? 'selected' : ''}>${esc(v.name)}${v.plate ? ' (' + esc(v.plate) + ')' : ''}</option>`).join('') || '<option value="">Sem objetos — sincronize em «Objetos GPS»</option>';
+  asClear.style.display = d.device ? '' : 'none'; asFrom.value = ''; asModal.classList.remove('hidden'); }
+const closeAs = () => asModal.classList.add('hidden');
+async function saveAs() { try { const [provider, device_id] = asDev.value.split('|'); if (!device_id) return;
+  await api(`/x/drivers/${asId}/assign`, {method:'POST', json: {provider, device_id, from: asFrom.value || null}}); closeAs(); await load(); } catch (e) { alert(e.message); } }
+async function clearAs() { try { await api(`/x/drivers/${asId}/assign`, {method:'POST', json: {clear: true, from: asFrom.value || null}}); closeAs(); await load(); } catch (e) { alert(e.message); } }
+function openLk(id) { lkId = id; const d = DRV.find(x => x.id === id); lkName.textContent = d.name; lkUrl.value = d.link;
+  const t = encodeURIComponent(`Olá ${d.name.split(' ')[0]}, este é o link do teu diário de bordo: ${d.link}`);
+  lkWa.href = 'https://wa.me/?text=' + t; lkSms.href = 'sms:' + (d.phone || '') + '?&body=' + t; lkModal.classList.remove('hidden'); }
+const closeLk = () => lkModal.classList.add('hidden');
+const copyLk = () => { lkUrl.select(); navigator.clipboard ? navigator.clipboard.writeText(lkUrl.value) : document.execCommand('copy'); };
+async function newTok() { if (!confirm('O link atual deixa de funcionar e o motorista tem de usar o novo. Continuar?')) return;
+  try { await api('/x/drivers/' + lkId, {method:'POST', json: {new_token: true}}); await load(); openLk(lkId); } catch (e) { alert(e.message); } }
+load().catch(e => show(e.message));
+</script>
+{% endblock %}

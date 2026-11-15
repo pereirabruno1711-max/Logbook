@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="pt">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Entrar · {{ config.APP_NAME }}</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/app.css?v=11">
+</head>
+<body>
+<div class="login">
+  <div class="left">
+    {% include "_brand.html" %}
+    <div>
+      <h2>O diário de bordo do motorista, sem papel.</h2>
+      <p>Estados de condução, trabalho e descanso gerados automaticamente a partir do GPS, com assinatura digital do motorista.</p>
+      <div class="feat">
+        <div>{{ I.check|safe }} Condução detetada pelo GPS em períodos de 5 minutos</div>
+        <div>{{ I.check|safe }} Relatório diário assinado em PDF</div>
+        <div>{{ I.check|safe }} Descarga em lote por motorista e período</div>
+      </div>
+    </div>
+    <div class="small" style="color:#8fa3b8">Track · Trust Track</div>
+  </div>
+  <div class="right">
+    <form method="post" action="/login">
+      <h1>Entrar</h1>
+      <p>Use o email e a palavra-passe da sua conta nesta plataforma.</p>
+      {% if erro %}<div class="err">{{ erro }}</div>{% endif %}
+      <label for="em">Email</label>
+      <input id="em" name="email" type="text" value="{{ email or '' }}" autocomplete="username" required autofocus>
+      <label for="pw">Palavra-passe</label>
+      <input id="pw" name="password" type="password" autocomplete="current-password" required>
+      <button class="btn">Entrar</button>
+      <p class="small mute" style="margin:0">Esqueceu-se da palavra-passe? Peça ao administrador da plataforma para a redefinir.</p>
+    </form>
+  </div>
+</div>
+</body>
+</html>

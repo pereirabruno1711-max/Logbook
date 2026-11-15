@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="pt"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>{{ config.APP_NAME }}</title><link rel="stylesheet" href="/static/driver.css?v=1"></head>
+<body><div class="center"><div class="card">
+  <h2 style="font-size:20px;margin-bottom:6px">{{ config.APP_NAME }}</h2>
+  <p class="mute" style="margin-top:0">Abra o <b>link pessoal</b> que recebeu do seu gestor (por WhatsApp ou SMS). Se preferir, cole-o aqui.</p>
+  {% if erro %}<div class="err">{{ erro }}</div>{% endif %}
+  <form method="post" action="/d/login">
+    <label class="f"><span>Link ou código</span><input type="text" name="code" autocomplete="off" autocapitalize="off" required></label>
+    <button class="btn">Entrar</button>
+  </form>
+</div></div></body></html>

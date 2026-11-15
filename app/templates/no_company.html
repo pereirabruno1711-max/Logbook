@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="pt">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sem empresa · {{ config.APP_NAME }}</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/app.css?v=11">
+</head>
+<body>
+<div class="login">
+  <div class="left">
+    {% include "_brand.html" %}
+    <div><h2>Conta sem empresa</h2><p>A sua conta está ativa, mas ainda não tem acesso a nenhuma empresa.</p></div>
+    <div class="small" style="color:#8fa3b8">{{ user.email }}</div>
+  </div>
+  <div class="right">
+    <form onsubmit="return false">
+      <h1>Ainda sem acesso</h1>
+      <p>Peça ao gestor da empresa ou a um administrador da plataforma para o adicionar a uma empresa (em <b>Empresas → Utilizadores</b>). Depois volte a entrar.</p>
+      <a class="btn" href="/logout" style="text-align:center">Terminar sessão</a>
+      <div class="row between small"><span></span><a href="/conta/palavra-passe">Alterar palavra-passe</a></div>
+    </form>
+  </div>
+</div>
+</body>
+</html>

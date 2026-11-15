@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="phead">
+  <div class="t"><h1>{{ I.building|safe }} Empresas</h1><p>{{ 'Todas as empresas da plataforma' if user.is_admin else 'As empresas a que tem acesso' }}. Cada empresa tem os seus motoristas, relatórios e utilizadores.</p></div>
+  <div class="act">
+    {% if user.is_admin %}<button class="btn" onclick="openNew()">{{ I.plus|safe }} Nova empresa</button>{% endif %}
+  </div>
+</div>
+<div class="toolbar"><div class="search">{{ I.search|safe }}<input id="q" placeholder="Pesquisar empresa…"></div></div>
+<div class="clist" id="list"><div class="empty">A carregar…</div></div>
+
+<div class="modal hidden" id="newModal" onclick="if(event.target===this)this.classList.add('hidden')">
+  <div class="box">
+    <h2>Nova empresa</h2>
+    <p class="mute small" style="margin:0 0 14px">Depois de criar, ligue a conta GPS da empresa e convide os utilizadores.</p>
+    <div class="field"><label>Nome</label><input id="nName" placeholder="Transportes Silva, Lda."></div>
+    <div class="field"><label>NIF (opcional)</label><input id="nNif"></div>
+    <div class="row" style="justify-content:flex-end"><button class="btn sec" onclick="document.getElementById('newModal').classList.add('hidden')">Cancelar</button><button class="btn" onclick="createCompany()">Criar empresa</button></div>
+  </div>
+</div>
+
+<div class="modal hidden" id="drawerBg" onclick="if(event.target===this)closeDrawer()" style="background:rgba(15,23,42,.3)"></div>
+<div class="drawer hidden" id="drawer"></div>
+<div class="modal hidden" id="mPw">
+  <div class="box">
+    <h2>Conta criada</h2>
+    <p class="mute small" style="margin:0 0 12px">Envie estes dados à pessoa. <b>Esta palavra-passe não volta a ser mostrada</b> e tem de ser trocada na primeira entrada.</p>
+    <div class="pwbox"><div><span class="small mute">Email</span><b id="pwEmail"></b></div><div><span class="small mute">Palavra-passe</span><code id="pwVal"></code></div></div>
+    <div class="row" style="justify-content:flex-end;margin-top:16px"><button class="btn sec" onclick="copyPw()" id="pwCopy">Copiar</button><button class="btn" onclick="mPw.classList.add('hidden')">Fechar</button></div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}<script>
+const CUR = {{ company.id }}, BASE = {{ base_url|tojson }};
+let ALL = [], GPSMODE = 'key';
+async function load() {
+  ALL = await api('/x/companies'); render();
+  const open = new URLSearchParams(location.search).get('id'); if (open) openCompany(+open);
+}
+function render() {
+  const q = document.getElementById('q').value.trim().toLowerCase();
+  const rows = ALL.filter(c => !q || (c.name + ' ' + (c.nif || '')).toLowerCase().includes(q));
+  document.getElementById('list').innerHTML = rows.map(c => `
+    <div class="ccard ${c.id === CUR ? 'cur' : ''}" onclick="openCompany(${c.id})">
+      <div class="row" style="gap:12px;flex-wrap:nowrap">
+        <div class="cicon">${esc(c.name.replace(/[^A-Za-zÀ-ú ]/g, '').split(' ').filter(Boolean).slice(0, 2).map(w => w[0]).join('').toUpperCase() || '?')}</div>
+        <div style="flex:1;min-width:0"><h3><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.name)}</span></h3>
+          <div class="small mute">${c.nif ? 'NIF ' + esc(c.nif) + ' · ' : ''}${c.mem} utilizador${c.mem === 1 ? '' : 'es'}${c.role ? ' · ' + (c.role === 'gestor' ? 'gestor' : 'utilizador') : ''}</div></div>
+        ${c.id === CUR ? '<span class="chip green">Ativa</span>' : ''}
+      </div>
+      <div class="row" style="margin-top:10px;gap:6px">${c.gps ? '<span class="tag gpswox">Track</span>' : '<span class="tag none">GPS por ligar</span>'}${c.tt ? '<span class="tag trusttrack">Trust Track</span>' : ''}</div>
+      <div class="stats"><div><b>${nf(c.drv)}</b><span>motoristas</span></div><div><b>${nf(c.sig)}</b><span>assinados (30 d)</span></div>
+        <div><b style="color:${c.pend ? 'var(--red)' : 'inherit'}">${nf(c.pend)}</b><span>em falta (7 d)</span></div></div>
+      <div class="row between" style="margin-top:12px"><span class="small mute">${c.last ? 'Último relatório ' + esc(c.last) : 'Sem relatórios assinados'}</span>
+        ${IS_SUPER ? `<div class="row" style="gap:6px" onclick="event.stopPropagation()"><span class="small mute">Personificar</span><button class="btn sec sm" onclick="switchCompany(${c.id},'gestor')">Gestor</button><button class="btn sec sm" onclick="switchCompany(${c.id},'utilizador')">Utilizador</button></div>`
+          : c.id === CUR ? '' : c.member ? `<button class="btn sm" onclick="event.stopPropagation();switchCompany(${c.id})">Entrar</button>` : ''}</div>
+    </div>`).join('') || '<div class="empty">Nenhuma empresa encontrada.</div>';
+}
+document.getElementById('q').oninput = render;
+
+function openNew() { document.getElementById('newModal').classList.remove('hidden'); document.getElementById('nName').focus(); }
+async function createCompany() {
+  try { const r = await api('/x/companies', {method: 'POST', json: {name: document.getElementById('nName').value, nif: document.getElementById('nNif').value}});
+    document.getElementById('newModal').classList.add('hidden'); await load(); openCompany(r.id); }
+  catch (e) { alert(e.message); }
+}
+
+function closeDrawer() { document.getElementById('drawer').classList.add('hidden'); document.getElementById('drawerBg').classList.add('hidden'); }
+async function openCompany(id) {
+  const c = await api('/x/companies/' + id);
+  const d = document.getElementById('drawer');
+  document.getElementById('drawerBg').classList.remove('hidden'); d.classList.remove('hidden');
+  const roleSel = (uid, r) => `<div class="sel"><select onchange="setRole(${c.id},${uid},this.value)" style="padding:5px 30px 5px 10px">
+      <option value="gestor" ${r === 'gestor' ? 'selected' : ''}>Gestor</option><option value="utilizador" ${r !== 'gestor' ? 'selected' : ''}>Utilizador</option></select></div>`;
+  d.innerHTML = `
+    <div class="row between"><h2>${esc(c.name)}</h2><button class="btn sec sm" onclick="closeDrawer()">✕</button></div>
+    <div class="small mute">${c.drv} motoristas · ${c.sig} relatórios assinados (30 d) · ${c.pend} em falta (7 d)</div>
+    <div class="row" style="margin-top:14px">${c.id === CUR ? '<span class="chip green">Empresa ativa</span>' : c.member ? `<button class="btn" onclick="switchCompany(${c.id})">Entrar nesta empresa</button>` : IS_SUPER ? '' : '<span class="small mute">Só o superadministrador pode entrar em empresas de que não é membro.</span>'}
+      ${IS_SUPER ? `<span class="small mute">Personificar esta empresa:</span><button class="btn" onclick="switchCompany(${c.id},'gestor')">Entrar como gestor</button><button class="btn sec" onclick="switchCompany(${c.id},'utilizador')">Entrar como utilizador</button>` : ''}</div>
+    ${!c.manager ? '<p class="mute" style="margin-top:20px">Só o gestor da empresa pode alterar os dados e os utilizadores.</p>' : `
+    <h3>Dados da empresa</h3>
+    <div class="field"><label>Nome</label><input id="cName" value="${esc(c.name)}"></div>
+    <div class="field"><label>NIF</label><input id="cNif" value="${esc(c.nif || '')}"></div>
+    <button class="btn sm" onclick="saveCompany(${c.id})">Guardar</button>
+
+    <h3>Plataformas GPS</h3>
+    <div class="row" style="margin-bottom:10px"><span class="tag gpswox">Track</span><span class="small">${c.gps ? 'Ligada' : 'Por ligar'}</span></div>
+    <div class="row" style="gap:6px;margin-bottom:8px">
+      <button class="btn sm ${GPSMODE === 'key' ? '' : 'sec'}" onclick="GPSMODE='key';openCompany(${c.id})">Chave API</button>
+      <button class="btn sm ${GPSMODE === 'login' ? '' : 'sec'}" onclick="GPSMODE='login';openCompany(${c.id})">Email e palavra-passe</button></div>
+    ${GPSMODE === 'key' ? `
+    <p class="small mute" style="margin:0 0 8px">Cole a chave API da conta Track da empresa (<i>user_api_hash</i>). É verificada antes de ser guardada.</p>
+    <div class="row"><input id="gKey" placeholder="$2y$10$…" style="flex:1;font-family:monospace" autocomplete="off">
+      <button class="btn sm" onclick="linkGpsKey(${c.id})">Ligar</button></div>` : `
+    <p class="small mute" style="margin:0 0 8px">Alternativa: o gestor escreve o email e a palavra-passe da conta GPS. Só é guardada a chave de acesso, nunca a palavra-passe.</p>
+    <div class="row"><input id="gEmail" placeholder="email da conta GPS" style="flex:1" autocomplete="off"><input id="gPass" type="password" placeholder="palavra-passe" style="flex:1" autocomplete="new-password">
+      <button class="btn sm" onclick="linkGps(${c.id})">Ligar</button></div>`}
+    <div class="row" style="margin:14px 0 8px"><span class="tag trusttrack">Trust Track</span><span class="small">${c.tt ? 'Chave guardada' : 'Opcional'}</span></div>
+    <div class="row"><input id="tt" type="password" style="flex:1" placeholder="${c.tt ? 'chave guardada — escreva para substituir' : 'chave API Trust Track'}" autocomplete="new-password">
+      <button class="btn sm" onclick="saveTT(${c.id})">Guardar</button></div>
+
+    <h3>Utilizadores</h3>
+    <table class="small"><tbody>${c.members.map(m => `<tr><td><b>${esc(m.email)}</b><div class="mute">${m.last_login ? 'último acesso ' + esc(m.last_login) : ''}</div></td>
+      <td>${roleSel(m.id, m.role)}</td><td class="num"><button class="btn sec sm" onclick="delMember(${c.id},${m.id})" title="Retirar acesso">✕</button></td></tr>`).join('')}
+      ${c.invites.map(i => `<tr><td><b>${esc(i.email)}</b><div class="mute">convite antigo pendente — fica ativo quando o administrador criar a conta deste email</div></td>
+      <td>${i.role === 'gestor' ? 'Gestor' : 'Utilizador'}</td><td class="num"><button class="btn sec sm" onclick="delInvite(${c.id},'${esc(i.email)}')">✕</button></td></tr>`).join('')}</tbody></table>
+    <div class="row" style="margin-top:10px"><input id="mEmail" placeholder="email do utilizador" style="flex:1">
+      <div class="sel"><select id="mRole"><option value="utilizador">Utilizador</option><option value="gestor">Gestor</option></select></div>
+      <button class="btn sm" onclick="addMember(${c.id})">Adicionar</button></div>
+    <p class="small mute">Se o email ainda não tiver conta, é criada uma com palavra-passe automática (mostrada uma única vez), que a pessoa troca na primeira entrada. <b>Gestor</b> gere a empresa e os utilizadores; <b>Utilizador</b> consulta motoristas e relatórios.</p>
+
+    <h3>API de relatórios assinados</h3>
+    <pre>curl -H "Authorization: Bearer ${esc(c.api_token)}" \\
+     "${esc(BASE)}/api/logbooks?from=2026-01-01&to=2026-01-31"</pre>
+    <button class="btn sec sm" onclick="newToken(${c.id})">Gerar novo token</button>`}
+    ${IS_SUPER ? `<h3 style="color:var(--red)">Zona perigosa</h3>
+    <p class="small mute" style="margin:0 0 8px">Apaga a empresa e <b>todos</b> os seus dados: ${c.drv} motoristas e todos os relatórios (incluindo os assinados), e retira o acesso a todos os utilizadores. Não é possível desfazer.</p>
+    <div class="row"><input id="delName" placeholder="escreva «${esc(c.name)}» para confirmar" style="flex:1" autocomplete="off">
+      <button class="btn danger sm" onclick="delCompany(${c.id})">Apagar empresa</button></div>` : ''}`;
+}
+async function run(fn, id) { try { await fn(); await load(); openCompany(id); } catch (e) { alert(e.message); } }
+const saveCompany = id => run(() => api('/x/companies/' + id, {method: 'POST', json: {name: cName.value, nif: cNif.value}}), id);
+const saveTT = id => run(() => api('/x/companies/' + id, {method: 'POST', json: {trusttrack_key: tt.value}}), id);
+const newToken = id => confirm('O token atual deixa de funcionar. Continuar?') && run(() => api('/x/companies/' + id, {method: 'POST', json: {new_token: true}}), id);
+const linkGpsKey = id => run(async () => { const r = await api('/x/companies/' + id + '/gps_key', {method: 'POST', json: {api_hash: gKey.value}}); alert('Conta GPS ligada: ' + r.devices + ' equipamentos encontrados.'); }, id);
+const linkGps = id => run(() => api('/x/companies/' + id + '/gps', {method: 'POST', json: {email: gEmail.value, password: gPass.value}}), id);
+const addMember = id => run(async () => { const r = await api('/x/companies/' + id + '/members', {method: 'POST', json: {email: mEmail.value, role: mRole.value}});
+  if (r.created) showPw(r.email, r.password); }, id);
+function showPw(email, pw) {
+  pwEmail.textContent = email; pwVal.textContent = pw; pwCopy.textContent = 'Copiar'; mPw.classList.remove('hidden');
+}
+async function copyPw() {
+  const t = 'Endereço: ' + location.origin + '\nEmail: ' + pwEmail.textContent + '\nPalavra-passe: ' + pwVal.textContent;
+  try { await navigator.clipboard.writeText(t); pwCopy.textContent = 'Copiado ✓'; } catch (e) { pwCopy.textContent = 'Selecione e copie'; }
+}
+const setRole = (id, uid, role) => run(() => api(`/x/companies/${id}/members/${uid}`, {method: 'POST', json: {role}}), id);
+const delMember = (id, uid) => confirm('Retirar o acesso desta pessoa à empresa?') && run(() => api(`/x/companies/${id}/members/${uid}`, {method: 'DELETE'}), id);
+const delInvite = (id, email) => run(() => api(`/x/companies/${id}/invites?email=${encodeURIComponent(email)}`, {method: 'DELETE'}), id);
+async function delCompany(id) {
+  try { const r = await api('/x/companies/' + id + '?confirm=' + encodeURIComponent(delName.value), {method: 'DELETE'});
+    closeDrawer(); alert(`Empresa apagada (${r.drivers} motoristas, ${r.logbooks} relatórios).`);
+    if (id === CUR) location.reload(); else load(); }
+  catch (e) { alert(e.message); }
+}
+load();
+</script>{% endblock %}

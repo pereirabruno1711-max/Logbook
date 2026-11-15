@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="phead">
+  <div class="t"><h1>{{ I.report|safe }} Relatórios</h1><p>Diários assinados pelos motoristas. Filtre por motorista e período e descarregue em lote.</p></div>
+  <div class="act"><button class="btn" id="zipBtn" onclick="zip()">{{ I.down|safe }} Descarregar ZIP <span id="zipN"></span></button></div>
+</div>
+<div class="toolbar">
+  <div class="sel">
+    <button class="btn sec" data-menu id="drvBtn" style="min-width:210px;justify-content:space-between"><span id="drvLbl">Todos os motoristas</span>{{ I.chev|safe }}</button>
+    <div class="menu" data-keep style="left:0;right:auto;min-width:260px;padding:8px" id="drvMenu">
+      {% for d in drivers %}<label style="display:flex;gap:8px;align-items:center;padding:5px 8px;cursor:pointer"><input type="checkbox" class="dchk" value="{{ d.id }}"> {{ d.name }}{% if not d.active %} <span class="small mute">(inativo)</span>{% endif %}</label>{% endfor %}
+      {% if not drivers %}<div class="small mute" style="padding:8px">Sem motoristas.</div>{% endif %}
+    </div></div>
+  <label class="row small" style="gap:6px">De <input type="date" id="fFrom" value="{{ month_start }}"></label>
+  <label class="row small" style="gap:6px">Até <input type="date" id="fTo" value="{{ today }}"></label>
+  <div class="sel"><select id="fSt"><option value="signed">Assinados</option><option value="filling">Em preenchimento</option><option value="all">Todos</option></select></div>
+</div>
+<div class="card flush">
+  <table><thead><tr><th style="width:34px"><input type="checkbox" id="selAll" title="Selecionar todos"></th><th>Data</th><th>Motorista</th><th>Viatura</th>
+    <th class="num">Condução</th><th class="num">Trabalho</th><th class="num">Descanso</th><th class="num">Km</th><th>Estado</th><th class="num">PDF</th></tr></thead>
+    <tbody id="rows"><tr><td colspan="10" class="empty">A carregar…</td></tr></tbody></table>
+  <div class="tfoot"><span id="info"></span></div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const SL = {signed: 'Assinado', filling: 'Em preenchimento'};
+const hm = m => m == null ? '—' : Math.floor(m / 60) + 'h' + String(m % 60).padStart(2, '0');
+let ROWS = [];
+const dsel = () => [...document.querySelectorAll('.dchk:checked')].map(x => x.value);
+function qs() { const p = new URLSearchParams(), d = dsel(); if (d.length) p.set('driver', d.join(','));
+  if (fFrom.value) p.set('from', fFrom.value); if (fTo.value) p.set('to', fTo.value); p.set('status', fSt.value); return p; }
+async function load() { ROWS = await api('/x/logbooks?' + qs());
+  rows.innerHTML = ROWS.length ? ROWS.map(r => `<tr><td><input type="checkbox" class="rchk" value="${r.id}" ${r.status === 'signed' ? '' : 'disabled'}></td>
+    <td>${esc(r.day.split('-').reverse().join('/'))}</td><td><b>${esc(r.driver)}</b></td><td>${esc(r.plate) || '—'}</td>
+    <td class="num">${hm(r.driving)}</td><td class="num">${hm(r.working)}</td><td class="num">${hm(r.resting)}</td><td class="num">${r.km == null ? '—' : nf(r.km, 1)}</td>
+    <td><span class="pill ${r.status}">${SL[r.status]}</span>${r.signed_at ? `<div class="small mute">${esc(r.signed_at)}</div>` : ''}</td>
+    <td class="num"><a class="btn sec sm" href="${r.pdf}" target="_blank">${r.status === 'signed' ? 'Abrir' : 'Pré-visualizar'}</a></td></tr>`).join('')
+    : '<tr><td colspan="10" class="empty">Sem relatórios com estes filtros.</td></tr>';
+  info.textContent = ROWS.length + ' relatório' + (ROWS.length === 1 ? '' : 's'); selAll.checked = false; upd(); }
+function upd() { const n = document.querySelectorAll('.rchk:checked').length; zipN.textContent = n ? `(${n})` : ''; }
+function zip() { const ids = [...document.querySelectorAll('.rchk:checked')].map(x => x.value), p = qs(); p.set('status', 'signed');
+  if (ids.length) { p.delete('driver'); p.delete('from'); p.delete('to'); p.set('ids', ids.join(',')); }
+  location.href = '/relatorios/zip?' + p; }
+function lbl() { const n = dsel().length; drvLbl.textContent = n ? n + ' motorista' + (n > 1 ? 's' : '') : 'Todos os motoristas'; }
+document.addEventListener('change', e => { if (e.target.classList.contains('dchk')) { lbl(); load(); } else if (e.target.classList.contains('rchk')) upd(); });
+selAll.onchange = () => { document.querySelectorAll('.rchk:not(:disabled)').forEach(c => c.checked = selAll.checked); upd(); };
+[fFrom, fTo, fSt].forEach(el => el.onchange = load);
+load().catch(e => rows.innerHTML = `<tr><td colspan="10" class="empty">${esc(e.message)}</td></tr>`);
+</script>
+{% endblock %}
